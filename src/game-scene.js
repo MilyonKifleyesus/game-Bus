@@ -16,6 +16,60 @@ const LEVELS = {
   3: { name: 'HARD', desc: 'Cars + crate obstacles everywhere', color: '#ff4444', opponents: 3, boxes: true },
 };
 
+const PROFILE_KEY = 'driftArcadeV1Profile';
+const VEHICLES = {
+  taxi: { name: 'Taxi', color: 0xffcc00, cost: 0, topSpeed: 0.40, acceleration: 0.0062, handling: 0.028, drift: 1.0, boost: 1.0, crash: 1.0, combo: 1.0, coinBonus: 1.10, missionBonus: 1.15 },
+  sports: { name: 'Sports', color: 0xff3355, cost: 1200, topSpeed: 0.50, acceleration: 0.0075, handling: 0.025, drift: 0.90, boost: 1.15, crash: 0.80, combo: 0.95, coinBonus: 1.0, missionBonus: 1.0 },
+  police: { name: 'Police', color: 0xeeeeff, cost: 1600, topSpeed: 0.43, acceleration: 0.0068, handling: 0.030, drift: 0.95, boost: 1.30, crash: 1.0, combo: 1.0, coinBonus: 1.0, missionBonus: 1.0 },
+  bus: { name: 'Bus', color: 0x33aa55, cost: 1800, topSpeed: 0.37, acceleration: 0.0058, handling: 0.026, drift: 0.90, boost: 0.95, crash: 1.35, combo: 1.0, coinBonus: 1.0, missionBonus: 1.0 },
+  drift: { name: 'Drift', color: 0x55ccff, cost: 2200, topSpeed: 0.42, acceleration: 0.0065, handling: 0.032, drift: 1.40, boost: 1.05, crash: 0.9, combo: 1.25, coinBonus: 1.0, missionBonus: 1.0 },
+  delivery: { name: 'Delivery', color: 0xff8844, cost: 1400, topSpeed: 0.39, acceleration: 0.0060, handling: 0.029, drift: 1.0, boost: 1.0, crash: 1.1, combo: 1.0, coinBonus: 1.0, missionBonus: 1.30 },
+};
+const UPGRADE_KEYS = ['topSpeed', 'acceleration', 'handling', 'driftControl', 'boostCapacity', 'crashResistance', 'comboDuration'];
+
+function defaultProfile() {
+  return {
+    coins: 0, xp: 0, level: 1, selectedVehicle: 'taxi', unlockedVehicles: ['taxi'],
+    upgrades: Object.fromEntries(UPGRADE_KEYS.map(k => [k, 0])),
+    bestScore: 0, bestCombo: 1, bestNearMiss: 0,
+    cosmetics: { boostTrail: '#44ccff', smoke: '#cccccc' },
+    dailyRewardDate: '', missionSeed: new Date().toISOString().slice(0, 10), achievements: {},
+  };
+}
+
+function loadProfile() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null');
+    const base = defaultProfile();
+    return {
+      ...base,
+      ...(saved || {}),
+      unlockedVehicles: Array.isArray(saved?.unlockedVehicles) ? saved.unlockedVehicles : base.unlockedVehicles,
+      upgrades: { ...base.upgrades, ...(saved?.upgrades || {}) },
+      achievements: { ...base.achievements, ...(saved?.achievements || {}) },
+      cosmetics: { ...base.cosmetics, ...(saved?.cosmetics || {}) },
+    };
+  } catch (e) {
+    return defaultProfile();
+  }
+}
+
+function saveProfile() {
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+}
+
+const profile = loadProfile();
+
+function claimDailyRewardIfNeeded() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (profile.dailyRewardDate === today) return 0;
+  profile.dailyRewardDate = today;
+  profile.coins += 250;
+  profile.xp += 120;
+  saveProfile();
+  return 250;
+}
+
 // ============ GAME STATE ============
 const state = {
   speed: 0,
@@ -73,7 +127,159 @@ const state = {
   showPointsBanked: 0,
   bankedAmount: 0,
   pointsLog: [],
+  combo: 1,
+  comboValue: 0,
+  comboTimer: 0,
+  maxCombo: 1,
+  boost: 0,
+  boostCapacity: 100,
+  boosting: false,
+  boostCooldown: 0,
+  boostPulse: 0,
+  eventPopups: [],
+  nearMisses: new Map(),
+  nearMissCount: 0,
+  closeCallCount: 0,
+  weaveCount: 0,
+  lastWeaveSide: 0,
+  lastWeaveTime: -99,
+  threadNeedleCooldown: 0,
+  closestNearMiss: Infinity,
+  crashes: 0,
+  missionsCompleted: 0,
+  coinsEarned: 0,
+  perfectLapActive: true,
+  activeVehicle: 'taxi',
+  activeVehicleStats: null,
+  dynamicEvent: null,
+  nextDynamicEventTime: 9,
+  eventWarning: null,
+  eventTimer: 0,
+  finalCountdownPulse: 0,
+  weatherGrip: 1,
+  joystick: {
+    active: false,
+    pointerId: null,
+    centerX: 0,
+    centerY: 0,
+    x: 0,
+    y: 0,
+  },
+  gamepad: {
+    connected: false,
+    id: '',
+    x: 0,
+    y: 0,
+    accelerate: 0,
+    brake: 0,
+    drift: false,
+    boost: false,
+    restartHeld: false,
+  },
 };
+
+const DAILY_MISSIONS = [
+  { id: 'near_miss_10', label: '10 near misses', event: 'near_miss', target: 10, reward: 180 },
+  { id: 'drift_5s', label: 'Score 500 drift points', stat: 'driftScore', target: 500, reward: 220 },
+  { id: 'combo_5', label: 'Reach x5 combo', stat: 'maxCombo', target: 5, reward: 260 },
+  { id: 'no_crash_lap', label: 'Complete a clean lap', event: 'perfect_lap', target: 1, reward: 240 },
+  { id: 'thread_2', label: 'Thread the needle twice', event: 'thread_needle', target: 2, reward: 260 },
+];
+
+const runMissions = DAILY_MISSIONS.slice(0, 3).map(m => ({ ...m, progress: 0, complete: false }));
+
+function vehicleStats() {
+  const vehicle = VEHICLES[profile.selectedVehicle] || VEHICLES.taxi;
+  const up = profile.upgrades;
+  return {
+    ...vehicle,
+    topSpeed: vehicle.topSpeed + up.topSpeed * 0.015,
+    acceleration: vehicle.acceleration + up.acceleration * 0.00045,
+    handling: vehicle.handling + up.handling * 0.0014,
+    drift: vehicle.drift + up.driftControl * 0.08,
+    boost: vehicle.boost + up.boostCapacity * 0.05,
+    crash: vehicle.crash + up.crashResistance * 0.08,
+    combo: vehicle.combo + up.comboDuration * 0.08,
+  };
+}
+
+function addPopup(label, amount, color = '#44ff88') {
+  state.eventPopups.push({ label, amount, color, life: 1.25, age: 0 });
+  if (state.eventPopups.length > 5) state.eventPopups.shift();
+}
+
+function bumpCombo(strength = 1) {
+  const stats = state.activeVehicleStats || vehicleStats();
+  state.comboValue += strength;
+  state.combo = Math.min(8, 1 + state.comboValue * 0.18);
+  state.comboTimer = 3.0 + Math.min(1.6, stats.combo * 0.45);
+  state.maxCombo = Math.max(state.maxCombo, state.combo);
+}
+
+function breakCombo() {
+  state.combo = 1;
+  state.comboValue = 0;
+  state.comboTimer = 0;
+}
+
+function awardEvent(type, baseAmount, label, opts = {}) {
+  const comboTypes = new Set(['near_miss', 'close_call', 'thread_needle', 'traffic_weave', 'drift', 'boost', 'event_survive']);
+  if (comboTypes.has(type)) bumpCombo(opts.comboStrength ?? 1);
+  const multiplier = opts.noCombo ? 1 : state.combo;
+  const eventMult = state.dynamicEvent?.type === 'night' ? 1.25 : 1;
+  const amount = Math.max(0, Math.round(baseAmount * multiplier * eventMult));
+  if (amount > 0) state.totalPoints += amount;
+  const boostGain = opts.boost ?? 0;
+  if (boostGain > 0 && !state.boosting) {
+    state.boost = Math.min(state.boostCapacity, state.boost + boostGain * (state.activeVehicleStats?.boost || 1));
+  }
+  state.bankedAmount = amount;
+  state.showPointsBanked = Math.max(state.showPointsBanked, 1.1);
+  state.pointsFlash = 0.35;
+  state.pointsFlashIntensity = Math.min(0.75, 0.25 + amount / 1600);
+  state.pointsLog.push({ type, amount, time: state.totalTime, label, multiplier, lap: opts.lap });
+  addPopup(label, amount, opts.color || '#44ff88');
+  updateMissionProgress(type, opts);
+  playSfx(type);
+  return amount;
+}
+
+function updateMissionProgress(type, opts = {}) {
+  runMissions.forEach(m => {
+    if (m.complete) return;
+    if (m.event === type) m.progress += 1;
+    if (m.stat === 'maxCombo') m.progress = Math.max(m.progress, Math.floor(state.maxCombo));
+    if (m.stat === 'driftScore' && type === 'drift') m.progress += opts.rawDrift || 0;
+    if (m.progress >= m.target) {
+      m.complete = true;
+      state.missionsCompleted++;
+      const reward = Math.round(m.reward * (state.activeVehicleStats?.missionBonus || 1));
+      profile.coins += reward;
+      profile.xp += Math.round(reward * 0.7);
+      state.coinsEarned += reward;
+      saveProfile();
+      addPopup(`MISSION: ${m.label}`, reward, '#ffdd44');
+      state.pointsLog.push({ type: 'mission', amount: reward, time: state.totalTime, label: m.label, multiplier: 1 });
+      playSfx('mission');
+    }
+  });
+}
+
+function updateCombo(dt) {
+  if (state.comboTimer > 0) {
+    state.comboTimer -= dt;
+    if (state.comboTimer <= 0) {
+      state.comboValue = Math.max(0, state.comboValue - dt * 12);
+      state.combo = Math.max(1, state.combo - dt * 2.5);
+      if (state.combo <= 1.02) breakCombo();
+    }
+  }
+}
+
+function getUpgradeCost(key) {
+  const level = profile.upgrades[key] || 0;
+  return 220 + level * 180;
+}
 
 // ============ TOON SHADING HELPERS ============
 // Create a gradient map texture for toon shading (3 steps)
@@ -245,6 +451,9 @@ const fillLight = new THREE.DirectionalLight(0x6688cc, 0.4);
 fillLight.position.set(-30, 20, -20);
 scene.add(fillLight);
 
+const nightVisibilityLight = new THREE.HemisphereLight(0xa8c8ff, 0x32324d, 0);
+scene.add(nightVisibilityLight);
+
 // ============ WARM TOON LIGHTING SETUP ============
 {
   const fogColor = 0xd4956b;
@@ -352,6 +561,12 @@ function getClosestTrackT(px, pz) {
     if (d < bestDist) { bestDist = d; bestT = tt; }
   }
   return { t: bestT, dist: Math.sqrt(bestDist) };
+}
+
+function normalizeAngle(angle) {
+  while (angle > Math.PI) angle -= Math.PI * 2;
+  while (angle < -Math.PI) angle += Math.PI * 2;
+  return angle;
 }
 
 // ============ BUILD TRACK ============
@@ -1038,6 +1253,27 @@ const playerCar = createBus(playerBusMat, true);
 playerCar.name = 'playerBus';
 scene.add(playerCar);
 
+const playerNightHeadlight = new THREE.SpotLight(0xffefc7, 0, 34, Math.PI / 4.6, 0.55, 1.15);
+playerNightHeadlight.position.set(0, 1.05, BUS_LENGTH / 2 + 0.08);
+playerNightHeadlight.target.position.set(0, 0.12, 16);
+playerNightHeadlight.castShadow = false;
+playerCar.add(playerNightHeadlight);
+playerCar.add(playerNightHeadlight.target);
+
+function applyVehiclePreset() {
+  const stats = vehicleStats();
+  state.activeVehicle = profile.selectedVehicle;
+  state.activeVehicleStats = stats;
+  state.maxSpeed = stats.topSpeed;
+  state.acceleration = stats.acceleration;
+  state.turnSpeed = stats.handling;
+  state.boostCapacity = 100 + (profile.upgrades.boostCapacity || 0) * 12;
+  playerBusMat.color.setHex(stats.color);
+  playerCar.traverse(child => {
+    if (child.isMesh && child.material === playerBusMat) child.material.color.setHex(stats.color);
+  });
+}
+
 // Opponents — also buses, different colors (city bus style)
 const opponentBusMats = [
   new THREE.MeshToonMaterial({ color: 0x2255CC, gradientMap: toonGradient5 }), // blue city bus
@@ -1060,6 +1296,70 @@ for (let i = 0; i < 3; i++) {
     prevT: 0.1 + i * 0.3,
   });
 }
+
+// ============ ARCADE LANDMARKS ============
+function addLandmarkCluster(t, side, kind) {
+  const p = getTrackPoint(t);
+  const tan = getTrackTangent(t);
+  const nx = -tan.z, nz = tan.x;
+  const x = p.x + nx * side * 15;
+  const z = p.z + nz * side * 15;
+  const group = new THREE.Group();
+  group.position.set(x, 0, z);
+  group.rotation.y = Math.atan2(tan.x, tan.z);
+  if (kind === 'gas') {
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(7, 0.4, 4), new THREE.MeshToonMaterial({ color: 0xff3344, gradientMap: toonGradient4 }));
+    roof.position.y = 3.2;
+    group.add(roof);
+    for (let i = -1; i <= 1; i += 2) {
+      const pump = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.2, 0.7), new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonGradient3 }));
+      pump.position.set(i * 1.5, 0.6, 0);
+      group.add(pump);
+    }
+  } else if (kind === 'construction') {
+    for (let i = 0; i < 7; i++) {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.1, 8), new THREE.MeshToonMaterial({ color: 0xff7722, gradientMap: toonGradient4 }));
+      cone.position.set((i - 3) * 1.0, 0.55, (Math.random() - 0.5) * 4);
+      group.add(cone);
+    }
+    const sign = new THREE.Mesh(new THREE.BoxGeometry(4, 1.3, 0.2), new THREE.MeshToonMaterial({ color: 0xffdd44, gradientMap: toonGradient3 }));
+    sign.position.set(0, 2.2, -2.8);
+    group.add(sign);
+  } else if (kind === 'park') {
+    for (let i = 0; i < 8; i++) {
+      const tree = createTree(0.65 + Math.random() * 0.35);
+      tree.position.set((Math.random() - 0.5) * 9, 0, (Math.random() - 0.5) * 7);
+      group.add(tree);
+    }
+  } else if (kind === 'billboard') {
+    const board = new THREE.Mesh(new THREE.BoxGeometry(7, 3, 0.3), new THREE.MeshToonMaterial({ color: 0x332255, gradientMap: toonGradient4 }));
+    board.position.y = 4;
+    group.add(board);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.35, 0.34), new THREE.MeshBasicMaterial({ color: 0x44ccff }));
+    stripe.position.set(0, 4.5, -0.02);
+    group.add(stripe);
+    for (let i = -1; i <= 1; i += 2) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 4, 8), mat.metal);
+      post.position.set(i * 2.5, 2, 0);
+      group.add(post);
+    }
+  } else {
+    const tunnel = new THREE.Mesh(new THREE.TorusGeometry(3.6, 0.22, 8, 20, Math.PI), new THREE.MeshBasicMaterial({ color: 0x99ddff }));
+    tunnel.position.y = 2.8;
+    tunnel.rotation.z = Math.PI;
+    group.add(tunnel);
+  }
+  scene.add(group);
+}
+
+[
+  [0.08, 1, 'gas'],
+  [0.22, -1, 'park'],
+  [0.38, 1, 'construction'],
+  [0.56, -1, 'billboard'],
+  [0.72, 1, 'tunnel'],
+  [0.88, -1, 'park'],
+].forEach(args => addLandmarkCluster(...args));
 
 // ============ BOX OBSTACLES ============
 const boxMat = new THREE.MeshToonMaterial({ color: 0xDD9944, gradientMap: toonGradient4 });
@@ -1132,12 +1432,107 @@ const levelSelectOverlay = document.createElement('div');
 levelSelectOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(12px);z-index:500;font-family:"Fredoka","Lilita One",sans-serif;';
 document.body.appendChild(levelSelectOverlay);
 
+const garageOverlay = document.createElement('div');
+garageOverlay.style.cssText = 'position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.78);backdrop-filter:blur(12px);z-index:520;font-family:"Fredoka","Lilita One",sans-serif;color:#fff;pointer-events:auto;';
+document.body.appendChild(garageOverlay);
+
+let garageMessage = '';
+
+function renderGarage() {
+  garageOverlay.style.display = 'flex';
+  const vehicleCards = Object.entries(VEHICLES).map(([id, v]) => {
+    const unlocked = profile.unlockedVehicles.includes(id);
+    const selected = profile.selectedVehicle === id;
+    const canAfford = profile.coins >= v.cost;
+    const actionLabel = selected
+      ? 'SELECTED'
+      : unlocked
+        ? 'SELECT'
+        : canAfford
+          ? `BUY - ${v.cost} COINS`
+          : `LOCKED - ${v.cost - profile.coins} MORE`;
+    return `<button class="garage-vehicle" data-vehicle="${id}" style="text-align:left;cursor:pointer;color:#fff;background:${selected ? 'rgba(255,221,68,0.18)' : 'rgba(255,255,255,0.08)'};border:2px solid ${selected ? '#ffdd44' : 'rgba(255,255,255,0.18)'};border-radius:14px;padding:12px;min-height:116px;font-family:inherit;">
+      <div style="display:flex;align-items:center;gap:8px;"><span style="width:24px;height:16px;border-radius:4px;background:#${v.color.toString(16).padStart(6, '0')};display:inline-block;"></span><span style="font-size:20px;font-weight:900;">${v.name}</span></div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.62);margin-top:5px;line-height:1.35;">Speed ${v.topSpeed.toFixed(2)} | Handling ${v.handling.toFixed(3)}<br>Boost x${v.boost.toFixed(1)} | Drift x${v.drift.toFixed(1)}</div>
+      <div style="font-size:12px;font-weight:800;margin-top:9px;color:${unlocked ? '#88ffaa' : '#ffdd44'};">${actionLabel}</div>
+    </button>`;
+  }).join('');
+  const upgradeCards = UPGRADE_KEYS.map(key => {
+    const level = profile.upgrades[key] || 0;
+    const cost = getUpgradeCost(key);
+    return `<button class="garage-upgrade" data-upgrade="${key}" style="cursor:pointer;color:#fff;background:rgba(255,255,255,0.07);border:2px solid rgba(255,255,255,0.16);border-radius:12px;padding:9px 10px;text-align:left;font-family:inherit;">
+      <div style="display:flex;justify-content:space-between;font-weight:800;font-size:12px;"><span>${key.replace(/[A-Z]/g, m => ' ' + m).toUpperCase()}</span><span>Lv ${level}/5</span></div>
+      <div style="font-size:11px;color:${level >= 5 ? '#88ffaa' : '#ffdd44'};margin-top:4px;">${level >= 5 ? 'MAXED' : `${cost} coins`}</div>
+    </button>`;
+  }).join('');
+  garageOverlay.innerHTML = `<div style="width:min(960px,94vw);max-height:88vh;overflow:auto;background:rgba(12,12,18,0.92);border:3px solid rgba(255,255,255,0.25);border-radius:22px;padding:22px;box-shadow:0 8px 0 rgba(0,0,0,0.35);">
+    <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:18px;">
+      <div><div style="font-size:38px;font-weight:900;">GARAGE</div><div style="font-size:13px;color:rgba(255,255,255,0.62);">Coins ${profile.coins} | Level ${profile.level} | Best ${profile.bestScore.toLocaleString()}</div></div>
+      <button id="garage-close" style="cursor:pointer;background:rgba(255,255,255,0.12);border:2px solid rgba(255,255,255,0.2);color:#fff;border-radius:12px;padding:10px 16px;font-family:inherit;font-weight:800;">CLOSE</button>
+    </div>
+    <div style="font-size:13px;letter-spacing:1.5px;color:rgba(255,255,255,0.5);font-weight:800;margin-bottom:8px;">VEHICLES</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:18px;">${vehicleCards}</div>
+    <div id="garage-message" aria-live="polite" style="display:${garageMessage ? 'block' : 'none'};margin:-8px 0 16px;padding:9px 12px;border-radius:10px;background:rgba(255,221,68,0.12);border:1px solid rgba(255,221,68,0.42);color:#ffdd44;font-size:13px;font-weight:800;">${garageMessage}</div>
+    <div style="font-size:13px;letter-spacing:1.5px;color:rgba(255,255,255,0.5);font-weight:800;margin-bottom:8px;">UPGRADES</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:9px;">${upgradeCards}</div>
+  </div>`;
+  garageOverlay.querySelector('#garage-close').addEventListener('click', () => { garageOverlay.style.display = 'none'; buildLevelSelect(); });
+  garageOverlay.querySelectorAll('.garage-vehicle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.vehicle;
+      const v = VEHICLES[id];
+      if (!profile.unlockedVehicles.includes(id)) {
+        if (profile.coins < v.cost) {
+          garageMessage = `You need ${v.cost - profile.coins} more coins to unlock ${v.name}.`;
+          renderGarage();
+          return;
+        }
+        profile.coins -= v.cost;
+        profile.unlockedVehicles.push(id);
+      }
+      profile.selectedVehicle = id;
+      saveProfile();
+      applyVehiclePreset();
+      garageMessage = `${v.name} selected.`;
+      renderGarage();
+    });
+  });
+  garageOverlay.querySelectorAll('.garage-upgrade').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.upgrade;
+      const level = profile.upgrades[key] || 0;
+      if (level >= 5) return;
+      const cost = getUpgradeCost(key);
+      if (profile.coins < cost) {
+        garageMessage = `You need ${cost - profile.coins} more coins for this upgrade.`;
+        renderGarage();
+        return;
+      }
+      profile.coins -= cost;
+      profile.upgrades[key] = level + 1;
+      saveProfile();
+      applyVehiclePreset();
+      garageMessage = 'Upgrade purchased.';
+      renderGarage();
+    });
+  });
+}
+
+function openGarage() {
+  garageMessage = '';
+  renderGarage();
+}
+
+window.openGarage = openGarage;
+
 function buildLevelSelect() {
+  const dailyCoins = claimDailyRewardIfNeeded();
   levelSelectOverlay.style.display = 'flex';
   levelSelectOverlay.innerHTML = `
     <div style="text-align:center;">
       <div style="font-size:15px;letter-spacing:6px;color:rgba(255,255,255,0.5);margin-bottom:8px;font-weight:600;">SELECT</div>
       <div style="font-size:56px;font-weight:700;color:#fff;letter-spacing:1px;margin-bottom:40px;font-family:'Lilita One',sans-serif;-webkit-text-stroke:2px rgba(0,0,0,0.25);text-shadow:0 5px 0 rgba(0,0,0,0.35);">DIFFICULTY</div>
+      ${dailyCoins ? `<div style="margin:-24px auto 22px;width:max-content;background:rgba(255,221,68,0.16);border:2px solid rgba(255,221,68,0.5);border-radius:14px;padding:8px 14px;color:#ffdd44;font-weight:900;">Daily reward +${dailyCoins} coins</div>` : ''}
       <div style="display:flex;gap:18px;justify-content:center;flex-wrap:wrap;">
         ${[1,2,3].map(lvl => {
           const l = LEVELS[lvl];
@@ -1147,8 +1542,13 @@ function buildLevelSelect() {
           </div>`;
         }).join('')}
       </div>
-      <div style="font-size:14px;color:rgba(255,255,255,0.4);margin-top:30px;font-weight:500;">Click to start!</div>
+      <div style="display:flex;gap:10px;justify-content:center;align-items:center;margin-top:30px;">
+        <button id="open-garage" style="cursor:pointer;pointer-events:auto;background:rgba(255,221,68,0.16);border:2px solid rgba(255,221,68,0.55);color:#ffdd44;border-radius:14px;padding:10px 18px;font-family:inherit;font-weight:900;">GARAGE</button>
+        <div style="font-size:14px;color:rgba(255,255,255,0.4);font-weight:500;">Click a difficulty to start</div>
+      </div>
     </div>`;
+
+  levelSelectOverlay.querySelector('#open-garage').addEventListener('click', openGarage);
 
   levelSelectOverlay.querySelectorAll('.level-btn').forEach(btn => {
     btn.addEventListener('mouseenter', () => {
@@ -1173,6 +1573,7 @@ function buildLevelSelect() {
 function startLevel(lvl) {
   currentLevel = lvl;
   const cfg = LEVELS[lvl];
+  applyVehiclePreset();
   levelSelectOverlay.style.display = 'none';
 
   // Configure opponents
@@ -1225,6 +1626,34 @@ function startLevel(lvl) {
   state.pointsFlashIntensity = 0;
   state.pendingPointsFlashIntensity = 0;
   state.pointsLog = [];
+  state.combo = 1;
+  state.comboValue = 0;
+  state.comboTimer = 0;
+  state.maxCombo = 1;
+  state.boost = 25;
+  state.boosting = false;
+  state.boostCooldown = 0;
+  state.boostPulse = 0;
+  state.eventPopups = [];
+  state.nearMisses = new Map();
+  state.nearMissCount = 0;
+  state.closeCallCount = 0;
+  state.weaveCount = 0;
+  state.lastWeaveSide = 0;
+  state.lastWeaveTime = -99;
+  state.threadNeedleCooldown = 0;
+  state.closestNearMiss = Infinity;
+  state.crashes = 0;
+  state.missionsCompleted = 0;
+  state.coinsEarned = 0;
+  state.perfectLapActive = true;
+  state.dynamicEvent = null;
+  state.nextDynamicEventTime = 8 + Math.random() * 8;
+  state.eventWarning = null;
+  state.eventTimer = 0;
+  state.finalCountdownPulse = 0;
+  state.weatherGrip = 1;
+  runMissions.forEach(m => { m.progress = 0; m.complete = false; });
   state.turnInput = 0;
   state.turnHoldTime = 0;
   state.lastTurnDir = 0;
@@ -1492,6 +1921,22 @@ const pointsDisplay = document.createElement('div');
 pointsDisplay.style.cssText = 'position:absolute;top:16px;left:50%;transform:translateX(-50%);text-align:center;pointer-events:none;background:rgba(0,0,0,0.55);border:3px solid rgba(255,220,60,0.8);border-radius:18px;padding:8px 22px;box-shadow:0 4px 0 rgba(0,0,0,0.3),inset 0 1px 0 rgba(255,255,200,0.15);';
 hud.appendChild(pointsDisplay);
 
+const arcadeHud = document.createElement('div');
+arcadeHud.style.cssText = 'position:absolute;top:112px;left:24px;width:250px;pointer-events:none;color:#fff;';
+hud.appendChild(arcadeHud);
+
+const boostDisplay = document.createElement('div');
+boostDisplay.style.cssText = 'position:absolute;bottom:106px;left:50%;transform:translateX(-50%);width:280px;pointer-events:none;';
+hud.appendChild(boostDisplay);
+
+const eventBanner = document.createElement('div');
+eventBanner.style.cssText = 'position:absolute;top:18%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;opacity:0;transition:opacity 0.15s;z-index:160;';
+hud.appendChild(eventBanner);
+
+const popupStack = document.createElement('div');
+popupStack.style.cssText = 'position:absolute;top:31%;left:50%;transform:translateX(-50%);width:420px;text-align:center;pointer-events:none;z-index:155;';
+hud.appendChild(popupStack);
+
 const pointsLogPanel = document.createElement('div');
 pointsLogPanel.style.cssText = 'position:absolute;bottom:30px;right:24px;width:210px;max-height:260px;overflow:hidden;pointer-events:none;display:flex;flex-direction:column-reverse;';
 hud.appendChild(pointsLogPanel);
@@ -1506,8 +1951,12 @@ hud.appendChild(wrongWayDisplay);
 
 const controlsHint = document.createElement('div');
 controlsHint.style.cssText = 'position:absolute;bottom:30px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.55);color:#ddd;padding:10px 22px;border-radius:16px;font-size:13px;font-weight:500;border:3px solid rgba(255,255,255,0.5);box-shadow:0 4px 0 rgba(0,0,0,0.3);';
-controlsHint.innerHTML = '🚌 WASD — Accelerate, Brake & Steer &nbsp;|&nbsp; SHIFT / SPACE — Drift';
+controlsHint.innerHTML = 'JOYSTICK / WASD - drive &nbsp;|&nbsp; DRIFT / SPACE &nbsp;|&nbsp; BOOST / E';
 hud.appendChild(controlsHint);
+
+const gamepadDisplay = document.createElement('div');
+gamepadDisplay.style.cssText = 'position:absolute;bottom:78px;right:24px;display:none;background:rgba(0,0,0,0.58);color:#88ffaa;padding:8px 12px;border-radius:12px;font-size:11px;font-weight:800;border:2px solid rgba(100,255,160,0.45);letter-spacing:0.5px;';
+hud.appendChild(gamepadDisplay);
 
 // ============ DIFFICULTY BUTTON ============
 const diffBtn = document.createElement('div');
@@ -1780,6 +2229,50 @@ function updateEngineAudio(speedRatio) {
   // Filter cutoff: opens up at high RPM for more aggressive rasp
   const filterFreq = 200 + curve * 1400;
   engineAudio.filterNode.frequency.setTargetAtTime(filterFreq, t, 0.1);
+}
+
+function playSfx(type) {
+  if (!engineAudio.started || !engineAudio.ctx) return;
+  const ctx = engineAudio.ctx;
+  const now = ctx.currentTime;
+  const out = ctx.createGain();
+  out.gain.value = 0.0001;
+  out.connect(ctx.destination);
+  const osc = ctx.createOscillator();
+  const noiseGain = ctx.createGain();
+  let duration = 0.18;
+  let freq = 440;
+  let endFreq = 660;
+  let wave = 'sine';
+  let volume = 0.06;
+  if (type === 'near_miss') { freq = 520; endFreq = 960; duration = 0.12; wave = 'triangle'; volume = 0.045; }
+  if (type === 'close_call' || type === 'thread_needle') { freq = 720; endFreq = 1320; duration = 0.18; wave = 'sawtooth'; volume = 0.06; }
+  if (type === 'traffic_weave' || type === 'combo') { freq = 440 + state.combo * 55; endFreq = freq * 1.5; duration = 0.11; wave = 'square'; volume = 0.035; }
+  if (type === 'boost') { freq = 140; endFreq = 880; duration = 0.35; wave = 'sawtooth'; volume = 0.08; }
+  if (type === 'drift') { freq = 220; endFreq = 180; duration = 0.16; wave = 'sawtooth'; volume = 0.035; }
+  if (type === 'lap' || type === 'perfect_lap' || type === 'mission') { freq = 520; endFreq = 1040; duration = 0.35; wave = 'triangle'; volume = 0.08; }
+  if (type === 'crash_car' || type === 'crash_wall') { freq = 95; endFreq = 45; duration = 0.32; wave = 'sawtooth'; volume = 0.10; }
+  if (type === 'warning') { freq = 300; endFreq = 240; duration = 0.22; wave = 'square'; volume = 0.055; }
+  if (type === 'siren') { freq = 520; endFreq = 760; duration = 0.18; wave = 'sine'; volume = 0.035; }
+  osc.type = wave;
+  osc.frequency.setValueAtTime(freq, now);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(1, endFreq), now + duration);
+  out.gain.exponentialRampToValueAtTime(volume, now + 0.025);
+  out.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  osc.connect(out);
+  osc.start(now);
+  osc.stop(now + duration + 0.02);
+  if (type.startsWith('crash')) {
+    const buffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    noiseGain.gain.value = 0.08;
+    noise.connect(noiseGain);
+    noiseGain.connect(ctx.destination);
+    noise.start(now);
+  }
 }
 
 function stopEngineAudio() {
@@ -2095,7 +2588,24 @@ function makeToggle(label, key, value) {
   </div>`;
 }
 
+function applyNightVisibility() {
+  const nightFogColor = new THREE.Color(0x414663);
+  scene.fog = new THREE.FogExp2(nightFogColor, 0.012);
+  scene.background = nightFogColor.clone();
+  renderer.toneMappingExposure = Math.max(settingsState.exposure, 0.88);
+  ambientLight.color.set(0xb1c8f0);
+  ambientLight.intensity = 1.18;
+  sunLight.color.set(0xaec8ff);
+  sunLight.intensity = 1.05;
+  nightVisibilityLight.intensity = 0.62;
+  playerNightHeadlight.intensity = 44;
+}
+
 function applySettings() {
+  if (state.dynamicEvent?.type === 'night') {
+    applyNightVisibility();
+    return;
+  }
   const s = settingsState;
   renderer.toneMappingExposure = s.exposure;
   const fogColor = new THREE.Color(s.fogColorHex);
@@ -2108,6 +2618,8 @@ function applySettings() {
   sunLight.color.set(s.sunColorHex);
   ambientLight.intensity = s.ambientIntensity;
   ambientLight.color.set(s.ambientColorHex);
+  nightVisibilityLight.intensity = 0;
+  playerNightHeadlight.intensity = 0;
   renderer.shadowMap.enabled = s.shadowsEnabled;
   sunLight.castShadow = s.shadowsEnabled;
   // Update ground vertex colors to fade into new fog color
@@ -2188,22 +2700,155 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { state.keys[e.code] = false; });
 
-const mobileControls = document.createElement('div');
-mobileControls.style.cssText = 'position:fixed;bottom:0;left:0;width:100%;height:160px;pointer-events:none;z-index:101;display:none;';
+function axisWithDeadzone(value, deadzone = 0.14) {
+  const abs = Math.abs(value || 0);
+  if (abs <= deadzone) return 0;
+  return Math.sign(value) * ((abs - deadzone) / (1 - deadzone));
+}
 
-const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768;
-if (isMobile) {
+function gamepadButtonDown(pad, index, threshold = 0.18) {
+  const button = pad?.buttons?.[index];
+  return Boolean(button && (button.pressed || button.value > threshold));
+}
+
+function gamepadButtonValue(pad, index) {
+  const button = pad?.buttons?.[index];
+  return button ? Math.max(button.pressed ? 1 : 0, button.value || 0) : 0;
+}
+
+function shapedAnalog(value) {
+  if (!value) return 0;
+  return Math.sign(value) * Math.pow(Math.abs(value), 1.35);
+}
+
+function updateGamepadInput() {
+  const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()) : [];
+  const pad = pads.find(candidate => candidate && candidate.connected);
+  if (!pad) {
+    state.gamepad.connected = false;
+    state.gamepad.x = 0;
+    state.gamepad.y = 0;
+    state.gamepad.accelerate = 0;
+    state.gamepad.brake = 0;
+    state.gamepad.drift = false;
+    state.gamepad.boost = false;
+    state.gamepad.restartHeld = false;
+    gamepadDisplay.style.display = 'none';
+    return;
+  }
+
+  const wasConnected = state.gamepad.connected;
+  state.gamepad.connected = true;
+  state.gamepad.id = pad.id || 'Gamepad';
+  state.gamepad.x = axisWithDeadzone(pad.axes[0] || 0);
+  state.gamepad.y = axisWithDeadzone(pad.axes[1] || 0);
+  state.gamepad.accelerate = gamepadButtonValue(pad, 7);
+  state.gamepad.brake = gamepadButtonValue(pad, 6);
+  state.gamepad.drift = gamepadButtonDown(pad, 0) || gamepadButtonDown(pad, 4);
+  state.gamepad.boost = gamepadButtonDown(pad, 1) || gamepadButtonDown(pad, 5);
+
+  const restartPressed = gamepadButtonDown(pad, 9);
+  if (restartPressed && !state.gamepad.restartHeld && state.gameOver) restartGame();
+  state.gamepad.restartHeld = restartPressed;
+
+  if (!engineAudio.started && (Math.abs(state.gamepad.x) > 0 || Math.abs(state.gamepad.y) > 0 || state.gamepad.accelerate || state.gamepad.boost)) {
+    initEngineAudio();
+  }
+  gamepadDisplay.style.display = window.innerWidth < 640 ? 'none' : 'block';
+  gamepadDisplay.textContent = wasConnected ? 'CONTROLLER READY | LS steer | RT gas | LT brake | A drift | B boost' : 'CONTROLLER CONNECTED';
+}
+
+window.addEventListener('gamepadconnected', () => {
+  gamepadDisplay.style.display = window.innerWidth < 640 ? 'none' : 'block';
+  gamepadDisplay.textContent = 'CONTROLLER CONNECTED';
+});
+window.addEventListener('gamepaddisconnected', () => {
+  state.gamepad.connected = false;
+  gamepadDisplay.style.display = 'none';
+});
+
+const mobileControls = document.createElement('div');
+mobileControls.setAttribute('aria-label', 'On-screen driving controls');
+mobileControls.style.cssText = 'position:fixed;bottom:0;left:0;width:100%;height:184px;pointer-events:none;z-index:101;display:block;';
+
+const enableOnScreenControls = true;
+if (enableOnScreenControls) {
   mobileControls.style.display = 'block';
-  controlsHint.style.display = 'none';
   
   const btnStyle = 'position:absolute;width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,0.2);border:2px solid rgba(255,255,255,0.4);pointer-events:auto;display:flex;align-items:center;justify-content:center;font-size:24px;color:white;-webkit-user-select:none;user-select:none;touch-action:none;';
+  const joystickBase = document.createElement('div');
+  joystickBase.dataset.control = 'joystick';
+  joystickBase.setAttribute('role', 'application');
+  joystickBase.setAttribute('aria-label', 'Driving joystick. Drag to steer, accelerate, or brake.');
+  joystickBase.style.cssText = 'position:absolute;bottom:30px;left:22px;width:136px;height:136px;border-radius:50%;background:radial-gradient(circle at 50% 50%,rgba(255,255,255,0.10),rgba(0,0,0,0.34));border:3px solid rgba(255,255,255,0.58);box-shadow:0 4px 0 rgba(0,0,0,0.32),inset 0 0 24px rgba(255,255,255,0.08);pointer-events:auto;touch-action:none;-webkit-user-select:none;user-select:none;cursor:grab;';
+  const joystickThumb = document.createElement('div');
+  joystickThumb.style.cssText = 'position:absolute;left:50%;top:50%;width:54px;height:54px;border-radius:50%;transform:translate(-50%,-50%);background:rgba(255,221,68,0.88);border:3px solid rgba(255,255,255,0.72);box-shadow:0 4px 0 rgba(0,0,0,0.28),0 0 18px rgba(255,221,68,0.45);';
+  const joystickLabel = document.createElement('div');
+  joystickLabel.textContent = 'JOYSTICK';
+  joystickLabel.style.cssText = 'position:absolute;left:0;right:0;bottom:-22px;text-align:center;color:rgba(255,255,255,0.75);font-size:11px;font-weight:900;letter-spacing:1px;text-shadow:0 2px 0 rgba(0,0,0,0.45);';
+  joystickBase.appendChild(joystickThumb);
+  joystickBase.appendChild(joystickLabel);
+  mobileControls.appendChild(joystickBase);
+
+  function updateJoystickFromPointer(e) {
+    const rect = joystickBase.getBoundingClientRect();
+    state.joystick.centerX = rect.left + rect.width / 2;
+    state.joystick.centerY = rect.top + rect.height / 2;
+    const maxRadius = rect.width * 0.34;
+    const dx = e.clientX - state.joystick.centerX;
+    const dy = e.clientY - state.joystick.centerY;
+    const dist = Math.hypot(dx, dy);
+    const clamped = Math.min(maxRadius, dist);
+    const angle = Math.atan2(dy, dx);
+    const px = Math.cos(angle) * clamped;
+    const py = Math.sin(angle) * clamped;
+    const deadzone = 0.12;
+    let joyX = px / maxRadius;
+    let joyY = py / maxRadius;
+    if (Math.abs(joyX) < deadzone) joyX = 0;
+    if (Math.abs(joyY) < deadzone) joyY = 0;
+    state.joystick.x = joyX;
+    state.joystick.y = joyY;
+    joystickThumb.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
+  }
+
+  function resetJoystick() {
+    state.joystick.active = false;
+    state.joystick.pointerId = null;
+    state.joystick.x = 0;
+    state.joystick.y = 0;
+    joystickThumb.style.transform = 'translate(-50%,-50%)';
+  }
+
+  joystickBase.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    joystickBase.setPointerCapture(e.pointerId);
+    joystickBase.style.cursor = 'grabbing';
+    state.joystick.active = true;
+    state.joystick.pointerId = e.pointerId;
+    updateJoystickFromPointer(e);
+  });
+  joystickBase.addEventListener('pointermove', e => {
+    if (!state.joystick.active || state.joystick.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    updateJoystickFromPointer(e);
+  });
+  joystickBase.addEventListener('pointerup', e => {
+    if (state.joystick.pointerId === e.pointerId) {
+      joystickBase.style.cursor = 'grab';
+      resetJoystick();
+    }
+  });
+  joystickBase.addEventListener('pointercancel', () => {
+    joystickBase.style.cursor = 'grab';
+    resetJoystick();
+  });
   
   const btns = [
-    { id: 'mUp', text: '▲', style: `${btnStyle}bottom:90px;right:45px;`, key: 'ArrowUp' },
-    { id: 'mDown', text: '▼', style: `${btnStyle}bottom:15px;right:45px;`, key: 'ArrowDown' },
-    { id: 'mLeft', text: '◀', style: `${btnStyle}bottom:30px;left:20px;`, key: 'ArrowLeft' },
-    { id: 'mRight', text: '▶', style: `${btnStyle}bottom:30px;left:100px;`, key: 'ArrowRight' },
-    { id: 'mDrift', text: '↻', style: `${btnStyle}bottom:90px;left:60px;width:70px;height:70px;font-size:28px;background:rgba(255,150,0,0.25);border-color:rgba(255,180,0,0.5);`, key: 'Space' },
+    { id: 'mBoost', text: 'BOOST', style: `${btnStyle}bottom:92px;right:122px;width:78px;height:50px;border-radius:16px;font-size:14px;font-weight:900;background:rgba(60,180,255,0.25);border-color:rgba(90,210,255,0.6);`, key: 'KeyE' },
+    { id: 'mUp', text: 'UP', style: `${btnStyle}bottom:92px;right:45px;font-size:14px;font-weight:900;`, key: 'ArrowUp' },
+    { id: 'mDown', text: 'DOWN', style: `${btnStyle}bottom:18px;right:45px;font-size:12px;font-weight:900;`, key: 'ArrowDown' },
+    { id: 'mDrift', text: 'DRIFT', style: `${btnStyle}bottom:26px;right:122px;width:78px;height:50px;border-radius:16px;font-size:14px;font-weight:900;background:rgba(255,150,0,0.25);border-color:rgba(255,180,0,0.5);`, key: 'Space' },
   ];
   
   btns.forEach(b => {
@@ -2217,6 +2862,197 @@ if (isMobile) {
   });
 }
 document.body.appendChild(mobileControls);
+
+function activateBoost() {
+  if (state.boosting || state.boost < 18 || state.boostCooldown > 0 || state.gameOver) return;
+  state.boosting = true;
+  state.boostPulse = 0.35;
+  state.boostCooldown = 0.4;
+  awardEvent('boost', 30, 'BOOST LAUNCH', { boost: 0, comboStrength: 0.4, color: '#44ccff' });
+  playSfx('boost');
+}
+
+function updateBoost(dt, dtScale) {
+  const requestingBoost = state.keys.KeyE || state.keys.KeyQ || state.gamepad.boost;
+  if (requestingBoost && !state.boosting) activateBoost();
+  if (state.boostCooldown > 0) state.boostCooldown -= dt;
+  if (state.boosting) {
+    state.boost = Math.max(0, state.boost - dt * 32);
+    state.speed = Math.min(state.speed + state.acceleration * 1.2 * dtScale, state.maxSpeed * 1.35);
+    state.screenShake = Math.max(state.screenShake, 0.08);
+    state.screenShakeIntensity = Math.max(state.screenShakeIntensity, 0.08);
+    bloomPass.strength = THREE.MathUtils.lerp(bloomPass.strength, 0.45, 0.12);
+    camera.fov = THREE.MathUtils.lerp(camera.fov, 62, 0.08);
+    camera.updateProjectionMatrix();
+    const rearX = state.carPos.x - Math.sin(state.carAngle) * 2.4;
+    const rearZ = state.carPos.z - Math.cos(state.carAngle) * 2.4;
+    if (Math.random() > 0.25) spawnBoostFlame(rearX, 0.45, rearZ);
+    if (state.boost <= 0 || !requestingBoost) {
+      state.boosting = false;
+      state.boostCooldown = 0.75;
+    }
+  } else {
+    bloomPass.strength = THREE.MathUtils.lerp(bloomPass.strength, 0.15, 0.05);
+    camera.fov = THREE.MathUtils.lerp(camera.fov, 50, 0.05);
+    camera.updateProjectionMatrix();
+  }
+}
+
+function updateNearMisses(dt) {
+  if (!raceStarted || state.gameOver) return;
+  if (state.threadNeedleCooldown > 0) state.threadNeedleCooldown -= dt;
+  const closeOpps = [];
+  state.opponents.forEach((opp, i) => {
+    if (!opp.mesh.visible) return;
+    const dx = state.carPos.x - opp.mesh.position.x;
+    const dz = state.carPos.z - opp.mesh.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < 6.2 && dist > 2.4 && state.speed > state.maxSpeed * 0.32) closeOpps.push({ opp, dx, dz, dist });
+    const key = `opp_${i}`;
+    const cooldown = state.nearMisses.get(key) || 0;
+    if (cooldown > 0) state.nearMisses.set(key, Math.max(0, cooldown - dt));
+    if (dist < 5.0 && dist > 2.35 && cooldown <= 0 && state.speed > state.maxSpeed * 0.35) {
+      const close = dist < 3.1;
+      state.nearMisses.set(key, 1.15);
+      state.nearMissCount++;
+      if (close) state.closeCallCount++;
+      state.closestNearMiss = Math.min(state.closestNearMiss, dist);
+      const side = Math.sign(Math.sin(Math.atan2(dx, dz) - state.carAngle)) || 1;
+      if (state.lastWeaveSide !== 0 && side !== state.lastWeaveSide && state.totalTime - state.lastWeaveTime < 2.3) {
+        state.weaveCount++;
+        awardEvent('traffic_weave', 85 + state.weaveCount * 20, `WEAVE x${state.weaveCount}`, { boost: 8, comboStrength: 1.2, color: '#66ddff' });
+      }
+      state.lastWeaveSide = side;
+      state.lastWeaveTime = state.totalTime;
+      awardEvent(close ? 'close_call' : 'near_miss', close ? 120 : 60, close ? 'CLOSE CALL' : 'NEAR MISS', { boost: close ? 12 : 7, comboStrength: close ? 1.5 : 1, color: close ? '#ffdd44' : '#44ff88' });
+      if (close) {
+        state.screenShake = Math.max(state.screenShake, 0.16);
+        state.screenShakeIntensity = Math.max(state.screenShakeIntensity, 0.12);
+      }
+    }
+  });
+  if (closeOpps.length >= 2 && state.threadNeedleCooldown <= 0) {
+    closeOpps.sort((a, b) => a.dist - b.dist);
+    const a = closeOpps[0], b = closeOpps[1];
+    const gap = Math.hypot(a.opp.mesh.position.x - b.opp.mesh.position.x, a.opp.mesh.position.z - b.opp.mesh.position.z);
+    if (gap < 7.5) {
+      state.threadNeedleCooldown = 2.4;
+      awardEvent('thread_needle', 260, 'THREAD THE NEEDLE', { boost: 22, comboStrength: 2.2, color: '#ff66ff' });
+    }
+  }
+}
+
+function startDynamicEvent(type) {
+  state.dynamicEvent = { type, time: 0, duration: type === 'police' ? 12 : type === 'night' ? 14 : 9 };
+  state.eventWarning = null;
+  state.eventTimer = 1.4;
+  if (type === 'rain') state.weatherGrip = 0.82;
+  if (type === 'night') {
+    applyNightVisibility();
+  }
+  if (type === 'traffic' || type === 'construction' || type === 'roadblock' || type === 'delivery') spawnBoxes();
+  if (type === 'police') {
+    state.opponents.forEach((opp, i) => {
+      if (i === 0) {
+        opp.mesh.visible = true;
+        opp.speed = 0.00034;
+      }
+    });
+  }
+  playSfx(type === 'police' ? 'siren' : 'warning');
+}
+
+function endDynamicEvent() {
+  if (!state.dynamicEvent) return;
+  const type = state.dynamicEvent.type;
+  if (type === 'rain') state.weatherGrip = 1;
+  if (type === 'night') applySettings();
+  if ((type === 'construction' || type === 'roadblock' || type === 'delivery') && !LEVELS[currentLevel].boxes) clearBoxes();
+  awardEvent('event_survive', 180, `${type.toUpperCase()} SURVIVED`, { boost: 18, comboStrength: 1.5, color: '#ffdd44' });
+  state.dynamicEvent = null;
+  state.nextDynamicEventTime = state.totalTime + 10 + Math.random() * 12;
+}
+
+function updateDynamicEvents(dt) {
+  if (!raceStarted || state.gameOver) return;
+  if (!state.dynamicEvent && !state.eventWarning && state.totalTime >= state.nextDynamicEventTime) {
+    const pool = ['police', 'traffic', 'construction', 'roadblock', 'rain', 'night', 'delivery'];
+    state.eventWarning = { type: pool[Math.floor(Math.random() * pool.length)], time: 2.4 };
+    playSfx('warning');
+  }
+  if (state.eventWarning) {
+    state.eventWarning.time -= dt;
+    if (state.eventWarning.time <= 0) startDynamicEvent(state.eventWarning.type);
+  }
+  if (state.dynamicEvent) {
+    state.dynamicEvent.time += dt;
+    if (state.dynamicEvent.type === 'police' && state.totalTime % 0.3 < dt) playSfx('siren');
+    if (state.dynamicEvent.type === 'rain' && Math.random() > 0.65) spawnParticle(state.carPos.x + (Math.random() - 0.5) * 8, 2.0, state.carPos.z + (Math.random() - 0.5) * 8);
+    if (state.dynamicEvent.time >= state.dynamicEvent.duration) endDynamicEvent();
+  }
+}
+
+function updateArcadeHud(dt) {
+  const compact = window.innerWidth < 640;
+  mobileControls.style.display = 'block';
+  timerDisplay.style.transform = compact ? 'scale(0.72)' : '';
+  timerDisplay.style.transformOrigin = 'top left';
+  timerDisplay.style.left = compact ? '8px' : '24px';
+  timerDisplay.style.top = compact ? '8px' : '16px';
+  pointsDisplay.style.transform = compact ? 'translateX(-50%) scale(0.72)' : 'translateX(-50%)';
+  pointsDisplay.style.transformOrigin = 'top center';
+  pointsDisplay.style.top = compact ? '8px' : '16px';
+  lapDisplay.style.transform = compact ? 'scale(0.72)' : '';
+  lapDisplay.style.transformOrigin = 'top right';
+  lapDisplay.style.right = compact ? '8px' : '24px';
+  lapDisplay.style.top = compact ? '8px' : '16px';
+  arcadeHud.style.top = compact ? '112px' : '112px';
+  arcadeHud.style.left = compact ? '8px' : '24px';
+  arcadeHud.style.width = compact ? '218px' : '250px';
+  boostDisplay.style.bottom = compact ? '218px' : '106px';
+  boostDisplay.style.width = compact ? '238px' : '280px';
+  controlsHint.style.display = compact ? 'none' : 'block';
+  pointsLogPanel.style.bottom = compact ? '30px' : '198px';
+  minimapCanvas.style.display = compact ? 'none' : 'block';
+  minimapCanvas.style.transform = compact ? 'scale(0.72)' : '';
+  minimapCanvas.style.transformOrigin = 'bottom left';
+  minimapCanvas.style.left = compact ? '8px' : '24px';
+  minimapCanvas.style.bottom = compact ? '12px' : '198px';
+  eventBanner.style.top = compact ? '35%' : '18%';
+  diffBtn.style.display = compact ? 'none' : 'flex';
+  state.eventPopups.forEach(p => { p.age += dt; p.life -= dt; });
+  state.eventPopups = state.eventPopups.filter(p => p.life > 0);
+  const comboPct = Math.max(0, Math.min(1, state.comboTimer / 4.5));
+  const missionHtml = runMissions.map(m => {
+    const pct = Math.min(1, m.progress / m.target);
+    return `<div style="margin-top:6px;font-size:11px;color:${m.complete ? '#88ffaa' : 'rgba(255,255,255,0.75)'};">
+      ${m.complete ? 'DONE' : `${Math.floor(m.progress)}/${m.target}`} ${m.label}
+      <div style="height:4px;background:rgba(255,255,255,0.12);border-radius:6px;overflow:hidden;margin-top:2px;"><div style="height:100%;width:${pct * 100}%;background:${m.complete ? '#44ff88' : '#ffdd44'};"></div></div>
+    </div>`;
+  }).join('');
+  arcadeHud.innerHTML = `
+    <div style="background:rgba(0,0,0,0.55);border:2px solid rgba(255,255,255,0.28);border-radius:14px;padding:10px 12px;box-shadow:0 4px 0 rgba(0,0,0,0.28);">
+      <div style="display:flex;justify-content:space-between;align-items:end;"><span style="font-size:11px;letter-spacing:1.5px;color:rgba(255,255,255,0.55);">COMBO</span><span style="font-size:28px;font-weight:900;color:${state.combo >= 5 ? '#ff6644' : '#ffdd44'};">x${state.combo.toFixed(1)}</span></div>
+      <div style="height:6px;background:rgba(255,255,255,0.12);border-radius:10px;overflow:hidden;"><div style="height:100%;width:${comboPct * 100}%;background:linear-gradient(90deg,#44ff88,#ffdd44,#ff6644);"></div></div>
+      <div style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.62);">Vehicle: ${state.activeVehicleStats?.name || 'Taxi'} | Coins: ${profile.coins}</div>
+      ${missionHtml}
+    </div>`;
+  const boostPct = Math.min(1, state.boost / state.boostCapacity);
+  boostDisplay.innerHTML = `<div style="background:rgba(0,0,0,0.58);border:3px solid ${state.boosting ? 'rgba(80,220,255,0.9)' : 'rgba(255,255,255,0.45)'};border-radius:16px;padding:7px 10px;box-shadow:0 4px 0 rgba(0,0,0,0.32);">
+    <div style="display:flex;justify-content:space-between;font-size:11px;font-weight:800;letter-spacing:1.4px;color:rgba(255,255,255,0.7);"><span>BOOST</span><span>${state.boosting ? 'ACTIVE' : 'E'}</span></div>
+    <div style="height:12px;background:rgba(255,255,255,0.12);border-radius:10px;overflow:hidden;margin-top:5px;"><div style="height:100%;width:${boostPct * 100}%;background:linear-gradient(90deg,#3ae7ff,#4477ff,#ff44ee);box-shadow:0 0 18px rgba(70,200,255,0.7);"></div></div>
+  </div>`;
+  const banner = state.eventWarning ? `WARNING: ${state.eventWarning.type.toUpperCase()} INCOMING` : state.dynamicEvent ? `${state.dynamicEvent.type.toUpperCase()} EVENT` : '';
+  eventBanner.style.opacity = banner ? '1' : '0';
+  eventBanner.innerHTML = banner ? `<div style="font-size:${compact ? 24 : 30}px;font-weight:900;color:#fff;text-shadow:0 0 25px rgba(255,80,80,0.8);letter-spacing:2px;">${banner}</div>` : '';
+  popupStack.innerHTML = state.eventPopups.slice(-4).reverse().map((p, i) => {
+    const alpha = Math.max(0, Math.min(1, p.life));
+    return `<div style="opacity:${alpha};transform:translateY(${-p.age * 18 - i * 3}px) scale(${1 + Math.max(0, 0.25 - p.age) * 0.6});transition:transform 0.05s;font-weight:900;text-shadow:0 3px 0 rgba(0,0,0,0.45),0 0 24px ${p.color};">
+      <div style="font-size:${i === 0 ? 34 : 24}px;color:${p.color};">${p.label}</div>
+      <div style="font-size:${i === 0 ? 28 : 18}px;color:#fff;">+${p.amount.toLocaleString()}</div>
+    </div>`;
+  }).join('');
+}
 
 // ============ GAME LOOP ============
 const clock = new THREE.Clock();
@@ -2238,6 +3074,7 @@ function formatTimeFixed(seconds) {
 
 function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
+  updateGamepadInput();
   
   // Don't run game if no level selected
   if (currentLevel === 0) {
@@ -2277,8 +3114,7 @@ function animate() {
       if (state.drifting && state.driftPoints > 0) {
         const banked = Math.round(state.driftPoints * state.pointsMultiplier);
         if (banked >= 5) {
-          state.totalPoints += banked;
-          state.pointsLog.push({ type: 'drift', amount: banked, time: state.totalTime, multiplier: state.pointsMultiplier });
+          awardEvent('drift', banked, 'FINAL DRIFT', { boost: 0, comboStrength: 0, rawDrift: banked, noCombo: true, color: '#ffaa33' });
         }
         state.driftPoints = 0;
         state.pointsMultiplier = 1;
@@ -2287,12 +3123,28 @@ function animate() {
       }
       state.gameOver = true;
       state.speed = 0;
+      const score = Math.round(state.totalPoints);
+      const runCoins = Math.max(20, Math.round(score / 35 * (state.activeVehicleStats?.coinBonus || 1)));
+      state.coinsEarned += runCoins;
+      profile.coins += runCoins;
+      profile.xp += Math.round(score / 18);
+      profile.level = Math.max(profile.level, 1 + Math.floor(profile.xp / 750));
+      profile.bestScore = Math.max(profile.bestScore || 0, score);
+      profile.bestCombo = Math.max(profile.bestCombo || 1, state.maxCombo);
+      profile.bestNearMiss = Math.max(profile.bestNearMiss || 0, Number.isFinite(state.closestNearMiss) ? (6 - state.closestNearMiss) : 0);
+      saveProfile();
       gameOverOverlay.style.display = 'flex';
       gameOverOverlay.innerHTML = `
         <div style="text-align:center;color:#fff;font-family:'Fredoka','Lilita One',sans-serif;">
           <div style="font-size:20px;letter-spacing:4px;color:rgba(255,255,255,0.6);margin-bottom:8px;font-weight:600;">TIME'S UP!</div>
           <div style="font-size:72px;font-weight:700;letter-spacing:-1px;margin-bottom:4px;font-family:'Lilita One',sans-serif;">FINAL SCORE</div>
-          <div style="font-size:68px;font-weight:700;color:#ffdd44;margin-bottom:24px;font-family:'Lilita One',sans-serif;">${Math.round(state.totalPoints).toLocaleString()}</div>
+          <div style="font-size:68px;font-weight:700;color:#ffdd44;margin-bottom:14px;font-family:'Lilita One',sans-serif;">${score.toLocaleString()}</div>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(145px,1fr));gap:7px;margin:0 auto 12px;width:min(520px,90vw);font-size:14px;color:rgba(255,255,255,0.72);font-weight:700;">
+            <div>Laps: ${state.lap}</div><div>Max combo: x${state.maxCombo.toFixed(1)}</div>
+            <div>Near misses: ${state.nearMissCount}</div><div>Crashes: ${state.crashes}</div>
+            <div>Missions: ${state.missionsCompleted}</div><div>Coins earned: ${state.coinsEarned}</div>
+          </div>
+          <div style="font-size:13px;color:#88ffaa;margin-bottom:8px;font-weight:700;">Best ${profile.bestScore.toLocaleString()} | Level ${profile.level} | Coins ${profile.coins}</div>
           <div style="font-size:16px;color:rgba(255,255,255,0.65);margin-bottom:6px;font-weight:500;">🏁 LAPS COMPLETED: ${state.lap}</div>
           <div style="font-size:16px;color:rgba(255,255,255,0.65);margin-bottom:6px;font-weight:500;">EVENTS: ${state.pointsLog.filter(e=>e.amount>0).length} earned · ${state.pointsLog.filter(e=>e.amount<0||e.amount===0&&e.type.startsWith('crash')).length} crashes</div>
           <div style="max-height:140px;overflow-y:auto;margin:12px auto 0;width:300px;text-align:left;pointer-events:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.3) transparent;">
@@ -2305,18 +3157,25 @@ function animate() {
               return `<div style="display:flex;justify-content:space-between;padding:4px 10px;margin-bottom:3px;border-radius:10px;background:rgba(255,255,255,0.08);border:2px solid rgba(255,255,255,0.12);font-size:12px;font-weight:500;"><span>${icon} <span style="color:#bbb;">${formatTime(e.time)}</span> ${label}</span><span style="color:${color};font-weight:700;">${amt}</span></div>`;
             }).join('')}
           </div>
-          <div style="font-size:15px;color:rgba(255,255,255,0.45);margin-top:30px;font-weight:500;">Press ENTER or tap to restart</div>
+          <button onclick="window.openGarage()" style="pointer-events:auto;cursor:pointer;margin-top:18px;background:rgba(255,221,68,0.16);border:2px solid rgba(255,221,68,0.55);color:#ffdd44;border-radius:14px;padding:10px 18px;font-family:inherit;font-weight:900;">GARAGE / UPGRADES</button>
+          <div style="font-size:15px;color:rgba(255,255,255,0.45);margin-top:14px;font-weight:500;">Press ENTER or tap to restart</div>
         </div>`;
       return;
     }
     
     const dtScale = dt * 60;
-    const holdingDrift = state.keys['Space'] || state.keys['ShiftLeft'] || state.keys['ShiftRight'];
+    updateCombo(dt);
+    updateDynamicEvents(dt);
+    const holdingDrift = state.keys['Space'] || state.keys['ShiftLeft'] || state.keys['ShiftRight'] || state.gamepad.drift;
+    const joystickX = state.joystick?.active ? state.joystick.x : state.gamepad.x;
+    const joystickY = state.joystick?.active ? state.joystick.y : state.gamepad.y;
     const turningLeft = state.keys['ArrowLeft'] || state.keys['KeyA'];
     const turningRight = state.keys['ArrowRight'] || state.keys['KeyD'];
 
-    const rawTurnDir = turningLeft ? 1 : turningRight ? -1 : 0;
-    const turnLerpSpeed = rawTurnDir !== 0 ? 0.18 : 0.12;
+    const digitalTurn = turningLeft ? 1 : turningRight ? -1 : 0;
+    const digitalSteerLimit = holdingDrift ? 0.95 : 0.72;
+    const rawTurnDir = Math.abs(joystickX) > 0.05 ? -shapedAnalog(joystickX) : digitalTurn * digitalSteerLimit;
+    const turnLerpSpeed = rawTurnDir !== 0 ? (holdingDrift ? 0.14 : 0.10) : 0.16;
     state.turnInput = THREE.MathUtils.lerp(state.turnInput, rawTurnDir, turnLerpSpeed * dtScale);
     if (Math.abs(state.turnInput) < 0.01) state.turnInput = 0;
 
@@ -2331,23 +3190,32 @@ function animate() {
       state.turnHoldTime = Math.max(0, state.turnHoldTime - dt * 3);
     }
 
-    const turnIntensity = Math.min(1.0, 0.6 + state.turnHoldTime * 1.35);
+    const turnIntensity = Math.min(1.0, 0.58 + state.turnHoldTime * 0.72);
     const turnDir = state.turnInput;
     const turning = Math.abs(turnDir) > 0.05;
     const absTurn = Math.abs(turnDir);
 
-    let effectiveMax = state.maxSpeed;
+    let effectiveMax = state.maxSpeed * (state.boosting ? 1.35 : 1);
+    const grip = state.weatherGrip;
+    const speedRatioForSteering = Math.min(1, Math.abs(state.speed) / state.maxSpeed);
+    const highSpeedSteerControl = THREE.MathUtils.lerp(1.0, state.drifting ? 0.78 : 0.58, speedRatioForSteering);
 
-    if (state.keys['ArrowUp'] || state.keys['KeyW']) {
-      state.speed = Math.min(state.speed + state.acceleration * dtScale, effectiveMax);
-    } else if (state.keys['ArrowDown'] || state.keys['KeyS']) {
-      state.speed = Math.max(state.speed - state.braking * dtScale, -state.maxSpeed * 0.3);
+    const touchThrottle = state.joystick.active ? Math.max(0, -state.joystick.y) : 0;
+    const touchBrake = state.joystick.active ? Math.max(0, state.joystick.y) : 0;
+    const throttleAmount = Math.max(state.keys['ArrowUp'] || state.keys['KeyW'] ? 1 : 0, touchThrottle, state.gamepad.accelerate);
+    const brakeAmount = Math.max(state.keys['ArrowDown'] || state.keys['KeyS'] ? 1 : 0, touchBrake, state.gamepad.brake);
+    if (throttleAmount > 0.05) {
+      state.speed = Math.min(state.speed + state.acceleration * throttleAmount * dtScale, effectiveMax);
+    } else if (brakeAmount > 0.05) {
+      state.speed = Math.max(state.speed - state.braking * brakeAmount * dtScale, -state.maxSpeed * 0.3);
     } else {
       if (state.speed > 0) state.speed = Math.max(0, state.speed - state.friction * dtScale);
       else state.speed = Math.min(0, state.speed + state.friction * dtScale);
     }
 
-    const canDrift = holdingDrift && absTurn > 0.15 && state.speed > state.maxSpeed * 0.35 && turnDir > 0.15;
+    updateBoost(dt, dtScale);
+
+    const canDrift = holdingDrift && absTurn > 0.15 && state.speed > state.maxSpeed * 0.35;
     if (canDrift && !state.drifting) {
       state.drifting = true;
       state.driftMomentum = Math.sign(turnDir) * 0.02;
@@ -2357,12 +3225,17 @@ function animate() {
       if (state.driftPoints > 0) {
         const banked = Math.round(state.driftPoints * state.pointsMultiplier);
         if (banked >= 5) {
-          state.totalPoints += banked;
+          awardEvent('drift', banked, 'DRIFT SCORE', { boost: Math.min(22, banked / 35), comboStrength: Math.min(2.5, banked / 300), rawDrift: banked, noCombo: true, color: '#ffaa33' });
+          if (banked >= 180) {
+            state.boost = Math.min(state.boostCapacity, state.boost + 10);
+            state.speed = Math.min(state.speed + 0.06, state.maxSpeed * 1.15);
+            addPopup('DRIFT EXIT BOOST', 0, '#44ccff');
+            playSfx('boost');
+          }
           state.bankedAmount = banked;
           state.showPointsBanked = 3.5;
           state.driftGracePeriod = 2.0;
           state.pendingPointsFlashIntensity = 0.4 + Math.min(0.4, banked / 2000);
-          state.pointsLog.push({ type: 'drift', amount: banked, time: state.totalTime, multiplier: state.pointsMultiplier });
         }
       }
       state.driftPoints = 0;
@@ -2373,11 +3246,11 @@ function animate() {
     }
 
     if (state.drifting) {
-      const driftTurnMul = 1.4;
-      state.carAngle += turnDir * turnIntensity * state.turnSpeed * driftTurnMul * (state.speed / state.maxSpeed) * dtScale;
+      const driftTurnMul = 1.4 * (state.activeVehicleStats?.drift || 1);
+      state.carAngle += turnDir * turnIntensity * state.turnSpeed * grip * highSpeedSteerControl * driftTurnMul * (state.speed / state.maxSpeed) * dtScale;
 
       const driftDir = Math.sign(state.driftMomentum) || Math.sign(turnDir);
-      const targetMomentum = driftDir * 0.045;
+      const targetMomentum = driftDir * 0.045 * (state.activeVehicleStats?.drift || 1);
       state.driftMomentum = THREE.MathUtils.lerp(state.driftMomentum, targetMomentum, 0.06 * dtScale);
 
       if (absTurn > 0.1 && Math.sign(turnDir) !== driftDir) {
@@ -2388,12 +3261,12 @@ function animate() {
       state.driftAngle = THREE.MathUtils.lerp(state.driftAngle, state.driftMomentum * 18, 0.08 * dtScale);
       state.driftBoost += Math.abs(state.driftMomentum) * dt * 3;
 
-      const pointRate = Math.abs(state.driftMomentum) * state.speed * 800;
+      const pointRate = Math.abs(state.driftMomentum) * state.speed * 800 * (state.activeVehicleStats?.drift || 1);
       state.driftPoints += pointRate * dt;
       state.pointsMultiplier = Math.min(5, 1 + state.driftBoost * 0.8);
       state.speed *= (1 - 0.002 * dtScale);
     } else {
-      state.carAngle += turnDir * turnIntensity * state.turnSpeed * (state.speed / state.maxSpeed) * dtScale;
+      state.carAngle += turnDir * turnIntensity * state.turnSpeed * grip * highSpeedSteerControl * (state.speed / state.maxSpeed) * dtScale;
       // Smooth recovery from drift — fast enough to feel responsive, slow enough to not snap
       const recoverySpeed = 0.12;
       state.driftAngle = THREE.MathUtils.lerp(state.driftAngle, 0, recoverySpeed * dtScale);
@@ -2401,6 +3274,24 @@ function animate() {
       // Clamp to zero when close to avoid lingering drift feel
       if (Math.abs(state.driftAngle) < 0.005) state.driftAngle = 0;
       if (Math.abs(state.driftMomentum) < 0.0005) state.driftMomentum = 0;
+    }
+
+    // Gentle road following keeps normal driving smooth on the continuous bends.
+    // Strong steering and active drifts still allow the player to choose their line.
+    if (state.speed > state.maxSpeed * 0.08) {
+      const guide = getClosestTrackT(state.carPos.x, state.carPos.z);
+      const pathPoint = getTrackPoint(guide.t);
+      const pathTangent = getTrackTangent(guide.t);
+      const playerSteering = Math.abs(rawTurnDir);
+      const centerPull = state.drifting ? 0.015 : THREE.MathUtils.lerp(0.14, 0.035, Math.min(1, playerSteering));
+      const desiredX = pathTangent.x + (pathPoint.x - state.carPos.x) * centerPull;
+      const desiredZ = pathTangent.z + (pathPoint.z - state.carPos.z) * centerPull;
+      const desiredAngle = Math.atan2(desiredX, desiredZ);
+      const headingError = normalizeAngle(desiredAngle - state.carAngle);
+      const edgeRatio = THREE.MathUtils.clamp((guide.dist - TRACK_WIDTH * 0.2) / (TRACK_WIDTH * 0.3), 0, 1);
+      const baseAssist = state.drifting ? 0.006 : playerSteering < 0.05 ? 0.08 : 0.025;
+      const assist = baseAssist + edgeRatio * (state.drifting ? 0.008 : 0.075);
+      state.carAngle += THREE.MathUtils.clamp(headingError, -0.55, 0.55) * assist * dtScale;
     }
 
     if (state.driftGracePeriod > 0) {
@@ -2429,6 +3320,11 @@ function animate() {
       state.speed *= 0.85;
       if (state.wallCrashCooldown <= 0) {
         state.wallCrashCooldown = 1.0;
+        state.crashes++;
+        state.perfectLapActive = false;
+        state.boost = Math.max(0, state.boost - 22);
+        breakCombo();
+        playSfx('crash_wall');
         state.screenShake = 0.35;
         state.screenShakeIntensity = 0.3 + Math.min(0.4, Math.abs(state.speed) * 0.8);
         state.crashFlash = 0.4;
@@ -2501,7 +3397,12 @@ function animate() {
 
         if (state.carCrashCooldown <= 0) {
           state.carCrashCooldown = 1.0;
-          state.speed *= 0.82;
+          state.crashes++;
+          state.perfectLapActive = false;
+          state.boost = Math.max(0, state.boost - 28);
+          breakCombo();
+          playSfx('crash_car');
+          state.speed *= 0.82 + Math.min(0.12, ((state.activeVehicleStats?.crash || 1) - 1) * 0.08);
           state.screenShake = 0.4;
           state.screenShakeIntensity = 0.4 + Math.min(0.5, Math.abs(state.speed) * 0.9);
           state.crashFlash = 0.45;
@@ -2562,6 +3463,11 @@ function animate() {
 
         if (state.wallCrashCooldown <= 0) {
           state.wallCrashCooldown = 0.5;
+          state.crashes++;
+          state.perfectLapActive = false;
+          state.boost = Math.max(0, state.boost - 16);
+          breakCombo();
+          playSfx('crash_wall');
           state.screenShake = 0.25;
           state.screenShakeIntensity = 0.25 + Math.min(0.3, Math.abs(state.speed) * 0.6);
           state.crashFlash = 0.3;
@@ -2630,6 +3536,8 @@ function animate() {
         );
       }
     }
+
+    updateNearMisses(dt);
     
     const { t: currentT } = getClosestTrackT(state.carPos.x, state.carPos.z);
 
@@ -2689,17 +3597,21 @@ function animate() {
     if (state.checkpoints.every(c => c) && currentT < 0.05 && state.lastCheckpoint > 0.9) {
       state.lap++;
       const lapBonus = 500 + state.lap * 200;
-      state.totalPoints += lapBonus;
+      awardEvent('lap', lapBonus, `LAP ${state.lap}`, { boost: 12, comboStrength: 0.5, noCombo: true, color: '#ffdd44', lap: state.lap });
+      if (state.perfectLapActive) {
+        awardEvent('perfect_lap', 350, 'PERFECT LAP', { boost: 25, comboStrength: 1.5, color: '#88ffaa' });
+      }
       state.bankedAmount = lapBonus;
       state.showPointsBanked = 2.0;
       state.pointsFlash = 0.6;
       state.pointsFlashIntensity = 0.5 + Math.min(0.3, lapBonus / 3000);
       state.pendingPointsFlashIntensity = 0;
       state.driftGracePeriod = 0;
-      state.pointsLog.push({ type: 'lap', amount: lapBonus, time: state.totalTime, lap: state.lap });
       if (state.lapTime < state.bestLap) state.bestLap = state.lapTime;
       state.lapTime = 0;
       state.checkpoints = [false, false, false, false];
+      state.perfectLapActive = true;
+      playSfx('lap');
     }
     state.lastCheckpoint = currentT;
   }
@@ -2806,8 +3718,9 @@ function animate() {
     state.carPos.z + Math.cos(camAngle) * 4
   );
   
-  cameraOffset.lerp(idealOffset, 0.04);
-  cameraLookAt.lerp(idealLookAt, 0.06);
+  const cameraFollow = state.drifting ? 0.085 : 0.07;
+  cameraOffset.lerp(idealOffset, cameraFollow);
+  cameraLookAt.lerp(idealLookAt, cameraFollow + 0.025);
   
   if (!debugMode) {
     camera.position.copy(cameraOffset);
@@ -2979,6 +3892,7 @@ function animate() {
     }
   }
 
+  updateArcadeHud(dt);
   drawMinimap();
   updatePointsLog();
   updateFPS();
