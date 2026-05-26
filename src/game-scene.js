@@ -18,12 +18,12 @@ const LEVELS = {
 
 const PROFILE_KEY = 'driftArcadeV1Profile';
 const VEHICLES = {
-  taxi: { name: 'Taxi', color: 0xffcc00, cost: 0, topSpeed: 0.40, acceleration: 0.0062, handling: 0.028, drift: 1.0, boost: 1.0, crash: 1.0, combo: 1.0, coinBonus: 1.10, missionBonus: 1.15 },
-  sports: { name: 'Sports', color: 0xff3355, cost: 1200, topSpeed: 0.50, acceleration: 0.0075, handling: 0.025, drift: 0.90, boost: 1.15, crash: 0.80, combo: 0.95, coinBonus: 1.0, missionBonus: 1.0 },
-  police: { name: 'Police', color: 0xeeeeff, cost: 1600, topSpeed: 0.43, acceleration: 0.0068, handling: 0.030, drift: 0.95, boost: 1.30, crash: 1.0, combo: 1.0, coinBonus: 1.0, missionBonus: 1.0 },
-  bus: { name: 'Bus', color: 0x33aa55, cost: 1800, topSpeed: 0.37, acceleration: 0.0058, handling: 0.026, drift: 0.90, boost: 0.95, crash: 1.35, combo: 1.0, coinBonus: 1.0, missionBonus: 1.0 },
-  drift: { name: 'Drift', color: 0x55ccff, cost: 2200, topSpeed: 0.42, acceleration: 0.0065, handling: 0.032, drift: 1.40, boost: 1.05, crash: 0.9, combo: 1.25, coinBonus: 1.0, missionBonus: 1.0 },
-  delivery: { name: 'Delivery', color: 0xff8844, cost: 1400, topSpeed: 0.39, acceleration: 0.0060, handling: 0.029, drift: 1.0, boost: 1.0, crash: 1.1, combo: 1.0, coinBonus: 1.0, missionBonus: 1.30 },
+  taxi:     { name: 'City Pod',   color: 0x00e5cc, cost: 0,    topSpeed: 0.40, acceleration: 0.0062, handling: 0.028, drift: 1.0,  boost: 1.0,  crash: 1.0,  combo: 1.0,  coinBonus: 1.10, missionBonus: 1.15 },
+  sports:   { name: 'Volt X',    color: 0xff2266, cost: 1200,  topSpeed: 0.50, acceleration: 0.0075, handling: 0.025, drift: 0.90, boost: 1.15, crash: 0.80, combo: 0.95, coinBonus: 1.0,  missionBonus: 1.0  },
+  police:   { name: 'Patrol E',  color: 0x4488ff, cost: 1600,  topSpeed: 0.43, acceleration: 0.0068, handling: 0.030, drift: 0.95, boost: 1.30, crash: 1.0,  combo: 1.0,  coinBonus: 1.0,  missionBonus: 1.0  },
+  bus:      { name: 'E-Transit', color: 0x22cc66, cost: 1800,  topSpeed: 0.37, acceleration: 0.0058, handling: 0.026, drift: 0.90, boost: 0.95, crash: 1.35, combo: 1.0,  coinBonus: 1.0,  missionBonus: 1.0  },
+  drift:    { name: 'Arc Racer', color: 0xaa44ff, cost: 2200,  topSpeed: 0.42, acceleration: 0.0065, handling: 0.032, drift: 1.40, boost: 1.05, crash: 0.9,  combo: 1.25, coinBonus: 1.0,  missionBonus: 1.0  },
+  delivery: { name: 'E-Cargo',   color: 0xff6600, cost: 1400,  topSpeed: 0.39, acceleration: 0.0060, handling: 0.029, drift: 1.0,  boost: 1.0,  crash: 1.1,  combo: 1.0,  coinBonus: 1.0,  missionBonus: 1.30 },
 };
 const UPGRADE_KEYS = ['topSpeed', 'acceleration', 'handling', 'driftControl', 'boostCapacity', 'crashResistance', 'comboDuration'];
 
@@ -32,7 +32,7 @@ function defaultProfile() {
     coins: 0, xp: 0, level: 1, selectedVehicle: 'taxi', unlockedVehicles: ['taxi'],
     upgrades: Object.fromEntries(UPGRADE_KEYS.map(k => [k, 0])),
     bestScore: 0, bestCombo: 1, bestNearMiss: 0,
-    cosmetics: { boostTrail: '#44ccff', smoke: '#cccccc' },
+    cosmetics: { boostTrail: '#00eeff', smoke: '#8844ff' },
     dailyRewardDate: '', missionSeed: new Date().toISOString().slice(0, 10), achievements: {},
   };
 }
@@ -162,6 +162,15 @@ const state = {
     pointerId: null,
     centerX: 0,
     centerY: 0,
+    x: 0,
+    y: 0,
+    magnitude: 0,
+    angle: 0,
+    pressure: 0,
+  },
+  cameraStick: {
+    active: false,
+    pointerId: null,
     x: 0,
     y: 0,
   },
@@ -2104,7 +2113,7 @@ function spawnDriftSmoke(x, y, z) {
 
 function spawnDriftSpark(x, y, z) {
   const geo = new THREE.BoxGeometry(0.04, 0.04, 0.04);
-  const sparkMat = new THREE.MeshBasicMaterial({ color: 0xffaa22 });
+  const sparkMat = new THREE.MeshBasicMaterial({ color: Math.random() > 0.4 ? 0x00eeff : 0xaa44ff });
   const particle = new THREE.Mesh(geo, sparkMat);
   particle.position.set(x, y, z);
   scene.add(particle);
@@ -2121,19 +2130,22 @@ function spawnDriftSpark(x, y, z) {
 }
 
 function spawnBoostFlame(x, y, z) {
-  const geo = new THREE.SphereGeometry(0.12 + Math.random() * 0.1, 4, 4);
-  const flameMat = new THREE.MeshBasicMaterial({ color: Math.random() > 0.5 ? 0xff4400 : 0xffaa00, transparent: true, opacity: 0.8 });
+  // Electric boost plasma — cyan/blue/violet energy burst instead of orange fire
+  const geo = new THREE.SphereGeometry(0.10 + Math.random() * 0.10, 4, 4);
+  const pick = Math.random();
+  const col = pick > 0.65 ? 0x00eeff : pick > 0.30 ? 0x6644ff : 0xcc44ff;
+  const flameMat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.85 });
   const particle = new THREE.Mesh(geo, flameMat);
   particle.position.set(x, y, z);
   scene.add(particle);
   state.particles.push({
     mesh: particle,
     vel: {
-      x: (Math.random() - 0.5) * 0.05,
-      y: 0.01 + Math.random() * 0.03,
-      z: (Math.random() - 0.5) * 0.05,
+      x: (Math.random() - 0.5) * 0.06,
+      y: 0.01 + Math.random() * 0.04,
+      z: (Math.random() - 0.5) * 0.06,
     },
-    life: 0.3 + Math.random() * 0.2,
+    life: 0.25 + Math.random() * 0.2,
     type: 'flame',
   });
 }
@@ -2143,60 +2155,66 @@ function spawnBoostFlame(x, y, z) {
 state.exhaustTimer = 0;
 
 // ============ ENGINE AUDIO SYSTEM ============
-// Web Audio API — low-frequency diesel rumble that rises in pitch with speed
+// Sample-based EV audio: real recorded motor sounds pitch-shifted by speed
 const engineAudio = {
   ctx: null,
-  oscillators: [],   // array of { osc, gain } for layered harmonics
-  masterGain: null,
+  buffers: {},
+  engineSource: null,
+  engineGain: null,
   filterNode: null,
   started: false,
-  suspended: false,
+  loaded: false,
 };
+
+async function _loadAudioBuffer(ctx, url) {
+  const resp = await fetch(url);
+  const ab = await resp.arrayBuffer();
+  return ctx.decodeAudioData(ab);
+}
+
+function _startEngineLoop() {
+  if (!engineAudio.loaded || !engineAudio.ctx || engineAudio.engineSource) return;
+  const ctx = engineAudio.ctx;
+  const src = ctx.createBufferSource();
+  src.buffer = engineAudio.buffers.rev;
+  src.loop = true;
+  src.playbackRate.value = 0.28;
+  src.connect(engineAudio.filterNode);
+  src.start();
+  engineAudio.engineSource = src;
+  engineAudio.engineGain.gain.setTargetAtTime(0.60, ctx.currentTime, 0.6);
+}
 
 function initEngineAudio() {
   if (engineAudio.started) return;
+  engineAudio.started = true;
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     if (!AudioContext) return;
-    engineAudio.ctx = new AudioContext();
-    engineAudio.started = true;
+    const ctx = new AudioContext();
+    engineAudio.ctx = ctx;
 
-    // Master gain (overall volume)
-    engineAudio.masterGain = engineAudio.ctx.createGain();
-    engineAudio.masterGain.gain.value = 0.0;
-
-    // Low-pass filter to shape the diesel rumble character
-    engineAudio.filterNode = engineAudio.ctx.createBiquadFilter();
+    // Build processing chain (works before samples load)
+    engineAudio.filterNode = ctx.createBiquadFilter();
     engineAudio.filterNode.type = 'lowpass';
-    engineAudio.filterNode.frequency.value = 320;
-    engineAudio.filterNode.Q.value = 1.2;
+    engineAudio.filterNode.frequency.value = 1200;
+    engineAudio.filterNode.Q.value = 0.7;
 
-    // Layered oscillators for rich harmonic content
-    // Fundamental + 2nd + 3rd harmonic, each sawtooth/square blended
-    const harmDefs = [
-      { type: 'sawtooth', freqMult: 1.0,  gainVal: 0.45 },  // fundamental — main rumble
-      { type: 'square',   freqMult: 2.0,  gainVal: 0.20 },  // 2nd harmonic — body
-      { type: 'sawtooth', freqMult: 3.0,  gainVal: 0.10 },  // 3rd harmonic — rasp
-      { type: 'square',   freqMult: 0.5,  gainVal: 0.30 },  // sub-octave — deep diesel thud
-    ];
+    engineAudio.engineGain = ctx.createGain();
+    engineAudio.engineGain.gain.value = 0;
 
-    harmDefs.forEach(def => {
-      const osc = engineAudio.ctx.createOscillator();
-      const g   = engineAudio.ctx.createGain();
-      osc.type = def.type;
-      osc.frequency.value = 38; // base idle frequency (Hz)
-      g.gain.value = def.gainVal;
-      osc.connect(g);
-      g.connect(engineAudio.filterNode);
-      osc.start();
-      engineAudio.oscillators.push({ osc, gain: g, freqMult: def.freqMult });
-    });
+    engineAudio.filterNode.connect(engineAudio.engineGain);
+    engineAudio.engineGain.connect(ctx.destination);
 
-    engineAudio.filterNode.connect(engineAudio.masterGain);
-    engineAudio.masterGain.connect(engineAudio.ctx.destination);
-
-    // Ramp in gently so no click
-    engineAudio.masterGain.gain.setTargetAtTime(0.22, engineAudio.ctx.currentTime, 0.4);
+    // Load the real EV motor recordings
+    Promise.all([
+      _loadAudioBuffer(ctx, '/sound/ev-supercar-rev-rac5jyuh.wav'),
+    ]).then(([revBuf]) => {
+      if (!engineAudio.ctx) return;
+      engineAudio.buffers.rev = revBuf;
+      engineAudio.loaded = true;
+      _startEngineLoop();
+    }).catch(e => console.warn('EV sound load failed:', e));
   } catch (e) {
     console.warn('Engine audio init failed:', e);
   }
@@ -2204,87 +2222,118 @@ function initEngineAudio() {
 
 function updateEngineAudio(speedRatio) {
   if (!engineAudio.started || !engineAudio.ctx) return;
-  if (engineAudio.ctx.state === 'suspended') {
-    engineAudio.ctx.resume();
-  }
+  if (engineAudio.ctx.state === 'suspended') engineAudio.ctx.resume();
+  if (!engineAudio.engineSource) return;
+
   const t = engineAudio.ctx.currentTime;
+  const abs = Math.abs(speedRatio);
 
-  // Pitch: idle base 38 Hz, rises to ~130 Hz at full throttle
-  // Using a slightly exponential curve so low speeds feel very heavy/low
-  const idleFreq  = 38;
-  const maxFreq   = 130;
-  const absRatio  = Math.abs(speedRatio);
-  // Exponential mapping: feels sluggish at low end, rises sharply near max
-  const curve     = Math.pow(absRatio, 0.65);
-  const baseFreq  = idleFreq + (maxFreq - idleFreq) * curve;
+  // Pitch: idle 0.28x → full throttle 2.1x playback rate
+  const rate = 0.28 + Math.pow(abs, 0.62) * 1.82;
+  engineAudio.engineSource.playbackRate.setTargetAtTime(rate, t, 0.07);
 
-  engineAudio.oscillators.forEach(({ osc, freqMult }) => {
-    osc.frequency.setTargetAtTime(baseFreq * freqMult, t, 0.08);
-  });
+  // Volume swells at speed for immersion
+  const vol = 0.38 + abs * 0.32;
+  engineAudio.engineGain.gain.setTargetAtTime(vol, t, 0.10);
 
-  // Volume: slightly louder at mid-throttle, quieter when coasting
-  const vol = 0.13 + absRatio * 0.11;
-  engineAudio.masterGain.gain.setTargetAtTime(vol, t, 0.12);
-
-  // Filter cutoff: opens up at high RPM for more aggressive rasp
-  const filterFreq = 200 + curve * 1400;
-  engineAudio.filterNode.frequency.setTargetAtTime(filterFreq, t, 0.1);
+  // Low-pass opens at high speed to let the high-freq whine through
+  const lpFreq = 900 + abs * 5500;
+  engineAudio.filterNode.frequency.setTargetAtTime(lpFreq, t, 0.09);
 }
 
 function playSfx(type) {
   if (!engineAudio.started || !engineAudio.ctx) return;
   const ctx = engineAudio.ctx;
   const now = ctx.currentTime;
-  const out = ctx.createGain();
-  out.gain.value = 0.0001;
-  out.connect(ctx.destination);
-  const osc = ctx.createOscillator();
-  const noiseGain = ctx.createGain();
-  let duration = 0.18;
-  let freq = 440;
-  let endFreq = 660;
-  let wave = 'sine';
-  let volume = 0.06;
-  if (type === 'near_miss') { freq = 520; endFreq = 960; duration = 0.12; wave = 'triangle'; volume = 0.045; }
-  if (type === 'close_call' || type === 'thread_needle') { freq = 720; endFreq = 1320; duration = 0.18; wave = 'sawtooth'; volume = 0.06; }
-  if (type === 'traffic_weave' || type === 'combo') { freq = 440 + state.combo * 55; endFreq = freq * 1.5; duration = 0.11; wave = 'square'; volume = 0.035; }
-  if (type === 'boost') { freq = 140; endFreq = 880; duration = 0.35; wave = 'sawtooth'; volume = 0.08; }
-  if (type === 'drift') { freq = 220; endFreq = 180; duration = 0.16; wave = 'sawtooth'; volume = 0.035; }
-  if (type === 'lap' || type === 'perfect_lap' || type === 'mission') { freq = 520; endFreq = 1040; duration = 0.35; wave = 'triangle'; volume = 0.08; }
-  if (type === 'crash_car' || type === 'crash_wall') { freq = 95; endFreq = 45; duration = 0.32; wave = 'sawtooth'; volume = 0.10; }
-  if (type === 'warning') { freq = 300; endFreq = 240; duration = 0.22; wave = 'square'; volume = 0.055; }
-  if (type === 'siren') { freq = 520; endFreq = 760; duration = 0.18; wave = 'sine'; volume = 0.035; }
-  osc.type = wave;
-  osc.frequency.setValueAtTime(freq, now);
-  osc.frequency.exponentialRampToValueAtTime(Math.max(1, endFreq), now + duration);
-  out.gain.exponentialRampToValueAtTime(volume, now + 0.025);
-  out.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-  osc.connect(out);
-  osc.start(now);
-  osc.stop(now + duration + 0.02);
-  if (type.startsWith('crash')) {
-    const buffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer;
-    noiseGain.gain.value = 0.08;
-    noise.connect(noiseGain);
-    noiseGain.connect(ctx.destination);
-    noise.start(now);
+
+  function synth(freq, endFreq, dur, wave, vol, delay) {
+    delay = delay || 0;
+    const out = ctx.createGain();
+    out.connect(ctx.destination);
+    const osc = ctx.createOscillator();
+    osc.type = wave;
+    osc.frequency.setValueAtTime(freq, now + delay);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, endFreq), now + delay + dur);
+    out.gain.setValueAtTime(0.0001, now + delay);
+    out.gain.exponentialRampToValueAtTime(vol, now + delay + 0.018);
+    out.gain.exponentialRampToValueAtTime(0.0001, now + delay + dur);
+    osc.connect(out);
+    osc.start(now + delay);
+    osc.stop(now + delay + dur + 0.02);
+  }
+
+  function noiseBurst(dur, filterFreq, vol, delay) {
+    delay = delay || 0;
+    const len = Math.ceil(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.frequency.value = filterFreq;
+    filt.Q.value = 0.9;
+    const g = ctx.createGain();
+    g.gain.value = vol;
+    src.connect(filt);
+    filt.connect(g);
+    g.connect(ctx.destination);
+    src.start(now + delay);
+  }
+
+  if (type === 'boost') {
+    // Capacitor discharge surge: big power sweep + energy noise crack
+    synth(160, 3400, 0.50, 'sine', 0.13);
+    synth(320, 5000, 0.35, 'triangle', 0.07, 0.03);
+    noiseBurst(0.09, 2800, 0.08);
+  } else if (type === 'drift') {
+    // Regen braking: descending motor whine + tire squeal noise
+    synth(1600, 500, 0.28, 'triangle', 0.06);
+    noiseBurst(0.22, 4000, 0.04);
+  } else if (type === 'crash_car') {
+    // High-speed collision: thud + crunch + metallic ring
+    synth(130, 30, 0.45, 'sine', 0.15);
+    noiseBurst(0.40, 700, 0.12);
+    synth(380, 200, 0.35, 'triangle', 0.07, 0.05);
+  } else if (type === 'crash_wall') {
+    // Wall scrape: bass thud + noise + short metallic tick
+    synth(110, 25, 0.38, 'sine', 0.13);
+    noiseBurst(0.30, 1200, 0.10);
+    synth(600, 350, 0.15, 'triangle', 0.05, 0.04);
+  } else if (type === 'near_miss') {
+    synth(900, 2000, 0.11, 'sine', 0.055);
+  } else if (type === 'close_call' || type === 'thread_needle') {
+    synth(700, 2200, 0.18, 'triangle', 0.065);
+    noiseBurst(0.08, 3000, 0.03);
+  } else if (type === 'traffic_weave' || type === 'combo') {
+    const base = 500 + (state.combo || 0) * 60;
+    synth(base, base * 1.7, 0.11, 'sine', 0.04);
+  } else if (type === 'lap' || type === 'perfect_lap' || type === 'mission') {
+    // Two-note electric chime
+    synth(660, 660, 0.28, 'sine', 0.10);
+    synth(990, 990, 0.22, 'sine', 0.08, 0.20);
+    synth(1320, 1320, 0.15, 'sine', 0.05, 0.38);
+  } else if (type === 'warning') {
+    synth(1000, 700, 0.16, 'sine', 0.08);
+    synth(1000, 700, 0.16, 'sine', 0.07, 0.22);
+  } else if (type === 'siren') {
+    synth(880, 1100, 0.18, 'sine', 0.045);
   }
 }
 
 function stopEngineAudio() {
-  if (!engineAudio.started || !engineAudio.ctx) return;
+  if (!engineAudio.started) return;
   try {
-    engineAudio.masterGain.gain.setTargetAtTime(0, engineAudio.ctx.currentTime, 0.2);
+    if (engineAudio.engineGain && engineAudio.ctx) {
+      engineAudio.engineGain.gain.setTargetAtTime(0, engineAudio.ctx.currentTime, 0.2);
+    }
     setTimeout(() => {
-      engineAudio.oscillators.forEach(({ osc }) => {
-        try { osc.stop(); } catch (e) {}
-      });
-      engineAudio.oscillators = [];
-      engineAudio.ctx.close();
+      try { if (engineAudio.engineSource) engineAudio.engineSource.stop(); } catch (e) {}
+      engineAudio.engineSource = null;
+      engineAudio.loaded = false;
+      engineAudio.buffers = {};
+      if (engineAudio.ctx) { try { engineAudio.ctx.close(); } catch (e) {} }
       engineAudio.ctx = null;
       engineAudio.started = false;
     }, 400);
@@ -2302,30 +2351,24 @@ window.addEventListener('touchstart',  tryStartEngineAudio, { once: false });
 window.addEventListener('mousedown',   tryStartEngineAudio, { once: false });
 
 function spawnExhaustPuff(x, y, z, isIdle) {
-  // At idle: darker, denser, bigger puff. At low speed: lighter grey wisps
-  const geo = new THREE.SphereGeometry(isIdle ? 0.18 + Math.random() * 0.12 : 0.10 + Math.random() * 0.08, 5, 4);
-  const greyVal = isIdle ? (0x33 + Math.floor(Math.random() * 0x22)) : (0x99 + Math.floor(Math.random() * 0x33));
-  const smokeColor = (greyVal << 16) | (greyVal << 8) | greyVal;
-  const smokeMat = new THREE.MeshBasicMaterial({
-    color: smokeColor,
-    transparent: true,
-    opacity: isIdle ? 0.55 + Math.random() * 0.2 : 0.35 + Math.random() * 0.15,
-    depthWrite: false,
-  });
-  const puff = new THREE.Mesh(geo, smokeMat);
-  puff.position.set(x, y, z);
-  scene.add(puff);
-
-  // Drift with slight spread — mostly rises and drifts backward
-  const spread = isIdle ? 0.03 : 0.015;
+  // EVs have no exhaust pipe — emit tiny electric energy sparks from the motor
+  // under hard acceleration; skip at idle (no combustion, no emissions)
+  if (isIdle) return;
+  const geo = new THREE.BoxGeometry(0.04, 0.04, 0.04);
+  const pick = Math.random();
+  const col = pick > 0.5 ? 0x00ddff : 0x8844ff;
+  const sparkMat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.9 });
+  const spark = new THREE.Mesh(geo, sparkMat);
+  spark.position.set(x, y, z);
+  scene.add(spark);
   state.particles.push({
-    mesh: puff,
+    mesh: spark,
     vel: {
-      x: (Math.random() - 0.5) * spread,
-      y: 0.025 + Math.random() * 0.025,
-      z: (Math.random() - 0.5) * spread - (isIdle ? 0.0 : 0.005),
+      x: (Math.random() - 0.5) * 0.05,
+      y: 0.02 + Math.random() * 0.03,
+      z: (Math.random() - 0.5) * 0.05,
     },
-    life: isIdle ? 0.9 + Math.random() * 0.5 : 0.6 + Math.random() * 0.4,
+    life: 0.3 + Math.random() * 0.2,
     type: 'exhaust',
   });
 }
@@ -2740,12 +2783,16 @@ function updateGamepadInput() {
   const wasConnected = state.gamepad.connected;
   state.gamepad.connected = true;
   state.gamepad.id = pad.id || 'Gamepad';
-  state.gamepad.x = axisWithDeadzone(pad.axes[0] || 0);
-  state.gamepad.y = axisWithDeadzone(pad.axes[1] || 0);
-  state.gamepad.accelerate = gamepadButtonValue(pad, 7);
-  state.gamepad.brake = gamepadButtonValue(pad, 6);
-  state.gamepad.drift = gamepadButtonDown(pad, 0) || gamepadButtonDown(pad, 4);
-  state.gamepad.boost = gamepadButtonDown(pad, 1) || gamepadButtonDown(pad, 5);
+  const deadzone = window.virtualController?.settings?.deadzone ?? 0.12;
+  const sensitivity = window.virtualController?.settings?.sensitivity ?? 1;
+  state.gamepad.x = THREE.MathUtils.clamp(axisWithDeadzone(pad.axes[0] || 0, deadzone) * sensitivity, -1, 1);
+  state.gamepad.y = THREE.MathUtils.clamp(axisWithDeadzone(pad.axes[1] || 0, deadzone) * sensitivity, -1, 1);
+  state.cameraStick.x = axisWithDeadzone(pad.axes[2] || 0, deadzone);
+  state.cameraStick.y = axisWithDeadzone(pad.axes[3] || 0, deadzone);
+  state.gamepad.accelerate = Math.max(gamepadButtonValue(pad, 7), Math.max(0, -state.gamepad.y));
+  state.gamepad.brake = Math.max(gamepadButtonValue(pad, 6), Math.max(0, state.gamepad.y));
+  state.gamepad.drift = gamepadButtonDown(pad, 0) || gamepadButtonDown(pad, 4) || gamepadButtonDown(pad, 2);
+  state.gamepad.boost = gamepadButtonDown(pad, 1) || gamepadButtonDown(pad, 5) || gamepadButtonValue(pad, 7) > 0.82;
 
   const restartPressed = gamepadButtonDown(pad, 9);
   if (restartPressed && !state.gamepad.restartHeld && state.gameOver) restartGame();
@@ -2754,12 +2801,12 @@ function updateGamepadInput() {
   if (!engineAudio.started && (Math.abs(state.gamepad.x) > 0 || Math.abs(state.gamepad.y) > 0 || state.gamepad.accelerate || state.gamepad.boost)) {
     initEngineAudio();
   }
-  gamepadDisplay.style.display = window.innerWidth < 640 ? 'none' : 'block';
-  gamepadDisplay.textContent = wasConnected ? 'CONTROLLER READY | LS steer | RT gas | LT brake | A drift | B boost' : 'CONTROLLER CONNECTED';
+  gamepadDisplay.style.display = 'block';
+  gamepadDisplay.textContent = wasConnected ? 'CONTROLLER READY | LS 360 drive | RS camera | RT gas | LT brake | A drift | B boost' : 'CONTROLLER CONNECTED';
 }
 
 window.addEventListener('gamepadconnected', () => {
-  gamepadDisplay.style.display = window.innerWidth < 640 ? 'none' : 'block';
+  gamepadDisplay.style.display = 'block';
   gamepadDisplay.textContent = 'CONTROLLER CONNECTED';
 });
 window.addEventListener('gamepaddisconnected', () => {
@@ -2767,113 +2814,353 @@ window.addEventListener('gamepaddisconnected', () => {
   gamepadDisplay.style.display = 'none';
 });
 
+const CONTROLLER_SETTINGS_KEY = 'driftArcadeControllerV1';
+const defaultControllerSettings = {
+  sensitivity: 1.12,
+  deadzone: 0.08,
+  haptics: true,
+  motion: false,
+  turbo: false,
+  theme: 'cyber',
+};
+function loadControllerSettings() {
+  try {
+    return { ...defaultControllerSettings, ...(JSON.parse(localStorage.getItem(CONTROLLER_SETTINGS_KEY) || '{}') || {}) };
+  } catch (e) {
+    return { ...defaultControllerSettings };
+  }
+}
+function saveControllerSettings() {
+  localStorage.setItem(CONTROLLER_SETTINGS_KEY, JSON.stringify(virtualController.settings));
+}
+
+const virtualController = {
+  settings: loadControllerSettings(),
+  motion: { supported: 'DeviceMotionEvent' in window || 'DeviceOrientationEvent' in window, active: false, x: 0, y: 0 },
+  battery: { supported: false, level: null, charging: false },
+  turboPulse: 0,
+  turboBoost: false,
+  lastMenuMove: 0,
+  particles: [],
+  buttons: {},
+  pads: [],
+};
+window.virtualController = virtualController;
+
+const controllerStyle = document.createElement('style');
+controllerStyle.textContent = `
+  .vc-root{position:fixed;inset:auto 0 0 0;height:222px;pointer-events:none;z-index:610;font-family:"Fredoka","Lilita One",Arial,sans-serif;color:#eaffff}
+  .vc-glass{background:linear-gradient(135deg,rgba(8,14,30,.50),rgba(26,10,42,.36));border:2px solid rgba(115,240,255,.55);box-shadow:0 0 20px rgba(0,240,255,.20),inset 0 0 22px rgba(255,255,255,.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+  .vc-joy{position:absolute;width:164px;height:164px;border-radius:28px;pointer-events:auto;touch-action:none;user-select:none;cursor:grab}
+  .vc-joy:before{content:"";position:absolute;inset:14px;border-radius:50%;border:2px solid rgba(255,255,255,.55);background:radial-gradient(circle at 45% 42%,rgba(0,255,255,.23),rgba(255,0,255,.13) 45%,rgba(0,0,0,.30));box-shadow:0 0 30px rgba(0,255,255,.22),inset 0 0 26px rgba(255,255,255,.11)}
+  .vc-thumb{position:absolute;left:50%;top:50%;width:64px;height:64px;border-radius:50%;transform:translate(-50%,-50%);background:radial-gradient(circle at 35% 25%,#fff6a8,#ffdd33 45%,#ff6a00);border:3px solid rgba(255,255,255,.8);box-shadow:0 8px 0 rgba(0,0,0,.32),0 0 26px rgba(255,221,50,.72);will-change:transform}
+  .vc-stick-label{position:absolute;left:0;right:0;bottom:-20px;text-align:center;font-size:11px;font-weight:900;letter-spacing:1.4px;color:rgba(235,255,255,.84);text-shadow:0 0 10px rgba(0,255,255,.7)}
+  .vc-btn{position:absolute;min-width:72px;height:58px;border-radius:18px;pointer-events:auto;touch-action:none;user-select:none;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;letter-spacing:.5px;color:#fff;border:2px solid rgba(255,255,255,.44);background:linear-gradient(135deg,rgba(255,255,255,.18),rgba(255,255,255,.06));box-shadow:0 7px 0 rgba(0,0,0,.28),0 0 24px rgba(0,255,255,.16);transition:transform .08s,box-shadow .08s,filter .12s}
+  .vc-btn[data-active="true"]{transform:translateY(5px) scale(.96);box-shadow:0 2px 0 rgba(0,0,0,.35),0 0 28px currentColor;filter:saturate(1.5)}
+  .vc-boost{right:136px;bottom:92px;color:#48efff;border-color:rgba(72,239,255,.72)}
+  .vc-drift{right:136px;bottom:26px;color:#ffba35;border-color:rgba(255,186,53,.76)}
+  .vc-up{right:44px;bottom:96px;min-width:62px;border-radius:50%;color:#9fff74}
+  .vc-down{right:44px;bottom:24px;min-width:62px;border-radius:50%;color:#9fff74}
+  .vc-turbo{right:226px;bottom:26px;min-width:82px;color:#ff4dff;border-color:rgba(255,77,255,.75)}
+  .vc-panel{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(470px,42vw);border-radius:18px;padding:10px 14px;pointer-events:auto}
+  .vc-row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;font-weight:800;letter-spacing:.8px}
+  .vc-meter{height:6px;border-radius:8px;background:rgba(255,255,255,.12);overflow:hidden;flex:1}.vc-meter>span{display:block;height:100%;width:50%;background:linear-gradient(90deg,#00f5ff,#ff35f8,#ffe246);box-shadow:0 0 14px #00f5ff}
+  .vc-slider{width:96px;accent-color:#00efff}.vc-pill{padding:4px 7px;border-radius:999px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08)}
+  .vc-particle{position:absolute;width:6px;height:6px;border-radius:50%;background:#00efff;box-shadow:0 0 12px #00efff;pointer-events:none;opacity:.9}
+  @media (max-width:760px){.vc-root{height:248px}.vc-joy[data-stick="drive"]{width:132px!important;height:132px!important;bottom:30px!important;left:14px!important}.vc-joy[data-stick="camera"]{width:84px!important;height:84px!important;bottom:44px!important;left:154px!important;border-radius:20px!important}.vc-joy[data-stick="camera"] .vc-thumb{width:34px!important;height:34px!important}.vc-thumb{width:56px;height:56px}.vc-stick-label{font-size:10px;bottom:-18px}.vc-panel{display:none}.vc-boost{right:14px;bottom:132px;min-width:72px;height:52px}.vc-drift{right:14px;bottom:68px;min-width:72px;height:52px}.vc-up{right:14px;bottom:8px;min-width:58px;height:52px}.vc-down{right:86px;bottom:8px;min-width:58px;height:52px}.vc-turbo{left:154px;right:auto;bottom:8px;min-width:84px;height:52px;font-size:11px}}
+`;
+document.head.appendChild(controllerStyle);
+
 const mobileControls = document.createElement('div');
-mobileControls.setAttribute('aria-label', 'On-screen driving controls');
-mobileControls.style.cssText = 'position:fixed;bottom:0;left:0;width:100%;height:184px;pointer-events:none;z-index:101;display:block;';
+mobileControls.className = 'vc-root';
+mobileControls.setAttribute('aria-label', 'Advanced virtual game controller');
+mobileControls.innerHTML = `
+  <div class="vc-joy vc-glass" data-stick="drive" role="application" aria-label="360 degree analog driving joystick" style="left:22px;bottom:38px">
+    <div class="vc-thumb" data-stick-thumb="drive"></div>
+    <div class="vc-stick-label">360 DRIVE</div>
+  </div>
+  <div class="vc-joy vc-glass" data-stick="camera" role="application" aria-label="Camera control joystick" style="left:208px;bottom:46px;width:118px;height:118px;border-radius:24px">
+    <div class="vc-thumb" data-stick-thumb="camera" style="width:44px;height:44px;background:radial-gradient(circle at 35% 25%,#dff,#42efff 45%,#145cff)"></div>
+    <div class="vc-stick-label">CAMERA</div>
+  </div>
+  <div class="vc-panel vc-glass">
+    <div class="vc-row"><span>CONTROLLER</span><span class="vc-pill" data-vc-status>TOUCH READY</span><span class="vc-pill" data-vc-battery>BATTERY N/A</span></div>
+    <div class="vc-row" style="margin-top:8px"><span>ANALOG</span><div class="vc-meter"><span data-vc-meter></span></div><span data-vc-xy>0.00 / 0.00</span></div>
+    <div class="vc-row" style="margin-top:8px"><label>SENS <input class="vc-slider" data-vc-slider="sensitivity" type="range" min="0.55" max="1.8" step="0.01"></label><label>DEAD <input class="vc-slider" data-vc-slider="deadzone" type="range" min="0" max="0.28" step="0.01"></label><button class="vc-pill" data-vc-motion style="color:#eaffff;cursor:pointer">MOTION OFF</button></div>
+  </div>
+  <div class="vc-btn vc-boost" data-btn="boost">BOOST</div>
+  <div class="vc-btn vc-drift" data-btn="drift">DRIFT</div>
+  <div class="vc-btn vc-up" data-btn="up">UP</div>
+  <div class="vc-btn vc-down" data-btn="down">DOWN</div>
+  <div class="vc-btn vc-turbo" data-btn="turbo">TURBO</div>
+`;
+document.body.appendChild(mobileControls);
 
-const enableOnScreenControls = true;
-if (enableOnScreenControls) {
-  mobileControls.style.display = 'block';
-  
-  const btnStyle = 'position:absolute;width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,0.2);border:2px solid rgba(255,255,255,0.4);pointer-events:auto;display:flex;align-items:center;justify-content:center;font-size:24px;color:white;-webkit-user-select:none;user-select:none;touch-action:none;';
-  const joystickBase = document.createElement('div');
-  joystickBase.dataset.control = 'joystick';
-  joystickBase.setAttribute('role', 'application');
-  joystickBase.setAttribute('aria-label', 'Driving joystick. Drag to steer, accelerate, or brake.');
-  joystickBase.style.cssText = 'position:absolute;bottom:30px;left:22px;width:136px;height:136px;border-radius:50%;background:radial-gradient(circle at 50% 50%,rgba(255,255,255,0.10),rgba(0,0,0,0.34));border:3px solid rgba(255,255,255,0.58);box-shadow:0 4px 0 rgba(0,0,0,0.32),inset 0 0 24px rgba(255,255,255,0.08);pointer-events:auto;touch-action:none;-webkit-user-select:none;user-select:none;cursor:grab;';
-  const joystickThumb = document.createElement('div');
-  joystickThumb.style.cssText = 'position:absolute;left:50%;top:50%;width:54px;height:54px;border-radius:50%;transform:translate(-50%,-50%);background:rgba(255,221,68,0.88);border:3px solid rgba(255,255,255,0.72);box-shadow:0 4px 0 rgba(0,0,0,0.28),0 0 18px rgba(255,221,68,0.45);';
-  const joystickLabel = document.createElement('div');
-  joystickLabel.textContent = 'JOYSTICK';
-  joystickLabel.style.cssText = 'position:absolute;left:0;right:0;bottom:-22px;text-align:center;color:rgba(255,255,255,0.75);font-size:11px;font-weight:900;letter-spacing:1px;text-shadow:0 2px 0 rgba(0,0,0,0.45);';
-  joystickBase.appendChild(joystickThumb);
-  joystickBase.appendChild(joystickLabel);
-  mobileControls.appendChild(joystickBase);
-
-  function updateJoystickFromPointer(e) {
-    const rect = joystickBase.getBoundingClientRect();
-    state.joystick.centerX = rect.left + rect.width / 2;
-    state.joystick.centerY = rect.top + rect.height / 2;
-    const maxRadius = rect.width * 0.34;
-    const dx = e.clientX - state.joystick.centerX;
-    const dy = e.clientY - state.joystick.centerY;
-    const dist = Math.hypot(dx, dy);
-    const clamped = Math.min(maxRadius, dist);
-    const angle = Math.atan2(dy, dx);
-    const px = Math.cos(angle) * clamped;
-    const py = Math.sin(angle) * clamped;
-    const deadzone = 0.12;
-    let joyX = px / maxRadius;
-    let joyY = py / maxRadius;
-    if (Math.abs(joyX) < deadzone) joyX = 0;
-    if (Math.abs(joyY) < deadzone) joyY = 0;
-    state.joystick.x = joyX;
-    state.joystick.y = joyY;
-    joystickThumb.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
-  }
-
-  function resetJoystick() {
-    state.joystick.active = false;
-    state.joystick.pointerId = null;
-    state.joystick.x = 0;
-    state.joystick.y = 0;
-    joystickThumb.style.transform = 'translate(-50%,-50%)';
-  }
-
-  joystickBase.addEventListener('pointerdown', e => {
-    e.preventDefault();
-    joystickBase.setPointerCapture(e.pointerId);
-    joystickBase.style.cursor = 'grabbing';
-    state.joystick.active = true;
-    state.joystick.pointerId = e.pointerId;
-    updateJoystickFromPointer(e);
+const driveStick = mobileControls.querySelector('[data-stick="drive"]');
+const driveThumb = mobileControls.querySelector('[data-stick-thumb="drive"]');
+const cameraStick = mobileControls.querySelector('[data-stick="camera"]');
+const cameraThumb = mobileControls.querySelector('[data-stick-thumb="camera"]');
+const controllerStatus = mobileControls.querySelector('[data-vc-status]');
+const controllerBattery = mobileControls.querySelector('[data-vc-battery]');
+const controllerMeter = mobileControls.querySelector('[data-vc-meter]');
+const controllerXY = mobileControls.querySelector('[data-vc-xy]');
+const motionToggle = mobileControls.querySelector('[data-vc-motion]');
+mobileControls.querySelectorAll('[data-vc-slider]').forEach(slider => {
+  const key = slider.dataset.vcSlider;
+  slider.value = virtualController.settings[key];
+  slider.addEventListener('input', () => {
+    virtualController.settings[key] = Number(slider.value);
+    saveControllerSettings();
+    hapticPulse(12, 0.12);
   });
-  joystickBase.addEventListener('pointermove', e => {
-    if (!state.joystick.active || state.joystick.pointerId !== e.pointerId) return;
-    e.preventDefault();
-    updateJoystickFromPointer(e);
-  });
-  joystickBase.addEventListener('pointerup', e => {
-    if (state.joystick.pointerId === e.pointerId) {
-      joystickBase.style.cursor = 'grab';
-      resetJoystick();
+});
+
+function hapticPulse(duration = 18, intensity = 0.35) {
+  if (!virtualController.settings.haptics) return;
+  if (navigator.vibrate) navigator.vibrate(Math.max(1, Math.round(duration)));
+  const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
+  pads.forEach(pad => {
+    const actuator = pad.vibrationActuator;
+    if (actuator?.playEffect) {
+      actuator.playEffect('dual-rumble', {
+        duration: Math.max(20, Math.round(duration * 2)),
+        weakMagnitude: Math.min(1, intensity * 0.55),
+        strongMagnitude: Math.min(1, intensity),
+      }).catch(() => {});
     }
   });
-  joystickBase.addEventListener('pointercancel', () => {
-    joystickBase.style.cursor = 'grab';
-    resetJoystick();
+}
+
+function spawnControllerParticle(x, y, color = '#00efff') {
+  const p = document.createElement('div');
+  p.className = 'vc-particle';
+  p.style.left = `${x}px`;
+  p.style.top = `${y}px`;
+  p.style.background = color;
+  p.style.boxShadow = `0 0 14px ${color}`;
+  mobileControls.appendChild(p);
+  virtualController.particles.push({ node: p, x, y, vx: (Math.random() - 0.5) * 2.4, vy: -1.2 - Math.random() * 1.8, life: 1 });
+}
+
+function updateStickFromPointer(e, stickNode, thumbNode, targetState, options = {}) {
+  const rect = stickNode.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  const maxRadius = rect.width * (options.radiusScale || 0.34);
+  const dx = e.clientX - centerX;
+  const dy = e.clientY - centerY;
+  const dist = Math.hypot(dx, dy);
+  const clamped = Math.min(maxRadius, dist);
+  const angle = Math.atan2(dy, dx);
+  const px = Math.cos(angle) * clamped;
+  const py = Math.sin(angle) * clamped;
+  const rawX = px / maxRadius;
+  const rawY = py / maxRadius;
+  const deadzone = virtualController.settings.deadzone;
+  const magnitude = Math.hypot(rawX, rawY);
+  const normalized = magnitude <= deadzone ? 0 : (magnitude - deadzone) / (1 - deadzone);
+  const sensitivity = virtualController.settings.sensitivity;
+  targetState.x = normalized ? THREE.MathUtils.clamp((rawX / Math.max(0.001, magnitude)) * normalized * sensitivity, -1, 1) : 0;
+  targetState.y = normalized ? THREE.MathUtils.clamp((rawY / Math.max(0.001, magnitude)) * normalized * sensitivity, -1, 1) : 0;
+  targetState.magnitude = Math.min(1, Math.hypot(targetState.x, targetState.y));
+  targetState.angle = angle;
+  targetState.pressure = e.pressure && e.pressure > 0 ? e.pressure : targetState.magnitude;
+  thumbNode.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px)) rotate(${targetState.x * 14}deg) scale(${1 + targetState.pressure * 0.12})`;
+  controllerMeter.style.width = `${Math.round(targetState.magnitude * 100)}%`;
+  controllerXY.textContent = `${targetState.x.toFixed(2)} / ${targetState.y.toFixed(2)}`;
+  if (Math.random() > 0.82) spawnControllerParticle(e.clientX, e.clientY, options.color || '#00efff');
+}
+
+function resetStick(thumbNode, targetState) {
+  targetState.active = false;
+  targetState.pointerId = null;
+  targetState.x = 0;
+  targetState.y = 0;
+  targetState.magnitude = 0;
+  targetState.pressure = 0;
+  thumbNode.style.transform = 'translate(-50%,-50%)';
+}
+
+function bindStick(stickNode, thumbNode, targetState, options) {
+  stickNode.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    stickNode.setPointerCapture(e.pointerId);
+    stickNode.style.cursor = 'grabbing';
+    targetState.active = true;
+    targetState.pointerId = e.pointerId;
+    updateStickFromPointer(e, stickNode, thumbNode, targetState, options);
+    hapticPulse(16, 0.2);
   });
-  
-  const btns = [
-    { id: 'mBoost', text: 'BOOST', style: `${btnStyle}bottom:92px;right:122px;width:78px;height:50px;border-radius:16px;font-size:14px;font-weight:900;background:rgba(60,180,255,0.25);border-color:rgba(90,210,255,0.6);`, key: 'KeyE' },
-    { id: 'mUp', text: 'UP', style: `${btnStyle}bottom:92px;right:45px;font-size:14px;font-weight:900;`, key: 'ArrowUp' },
-    { id: 'mDown', text: 'DOWN', style: `${btnStyle}bottom:18px;right:45px;font-size:12px;font-weight:900;`, key: 'ArrowDown' },
-    { id: 'mDrift', text: 'DRIFT', style: `${btnStyle}bottom:26px;right:122px;width:78px;height:50px;border-radius:16px;font-size:14px;font-weight:900;background:rgba(255,150,0,0.25);border-color:rgba(255,180,0,0.5);`, key: 'Space' },
-  ];
-  
-  btns.forEach(b => {
-    const btn = document.createElement('div');
-    btn.style.cssText = b.style;
-    btn.innerHTML = b.text;
-    btn.addEventListener('touchstart', e => { e.preventDefault(); state.keys[b.key] = true; });
-    btn.addEventListener('touchend', e => { e.preventDefault(); state.keys[b.key] = false; });
-    btn.addEventListener('touchcancel', e => { state.keys[b.key] = false; });
-    mobileControls.appendChild(btn);
+  stickNode.addEventListener('pointermove', e => {
+    if (!targetState.active || targetState.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    updateStickFromPointer(e, stickNode, thumbNode, targetState, options);
+  });
+  const finish = e => {
+    if (targetState.pointerId !== null && e.pointerId !== targetState.pointerId) return;
+    stickNode.style.cursor = 'grab';
+    resetStick(thumbNode, targetState);
+    hapticPulse(8, 0.1);
+  };
+  stickNode.addEventListener('pointerup', finish);
+  stickNode.addEventListener('pointercancel', finish);
+  stickNode.addEventListener('lostpointercapture', () => resetStick(thumbNode, targetState));
+}
+
+bindStick(driveStick, driveThumb, state.joystick, { color: '#ffe246' });
+bindStick(cameraStick, cameraThumb, state.cameraStick, { color: '#42efff', radiusScale: 0.30 });
+
+function bindVirtualButton(name, key, opts = {}) {
+  const btn = mobileControls.querySelector(`[data-btn="${name}"]`);
+  virtualController.buttons[name] = { pressed: false, key, node: btn, pressure: 0 };
+  const setPressed = (pressed, e) => {
+    virtualController.buttons[name].pressed = pressed;
+    virtualController.buttons[name].pressure = pressed ? (e?.pressure && e.pressure > 0 ? e.pressure : 1) : 0;
+    if (key) state.keys[key] = pressed;
+    btn.dataset.active = pressed ? 'true' : 'false';
+    if (pressed) {
+      hapticPulse(opts.haptic || 20, opts.intensity || 0.3);
+      const rect = btn.getBoundingClientRect();
+      for (let i = 0; i < 3; i++) spawnControllerParticle(rect.left + rect.width / 2, rect.top + rect.height / 2, opts.color || '#ff35f8');
+    }
+  };
+  btn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    btn.setPointerCapture(e.pointerId);
+    if (name === 'turbo') {
+      virtualController.settings.turbo = !virtualController.settings.turbo;
+      saveControllerSettings();
+      btn.dataset.active = virtualController.settings.turbo ? 'true' : 'false';
+      btn.textContent = virtualController.settings.turbo ? 'TURBO ON' : 'TURBO';
+      hapticPulse(35, 0.45);
+      return;
+    }
+    setPressed(true, e);
+  });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(type => {
+    btn.addEventListener(type, e => {
+      if (name !== 'turbo') setPressed(false, e);
+    });
   });
 }
-document.body.appendChild(mobileControls);
+
+bindVirtualButton('boost', 'KeyE', { color: '#42efff', haptic: 28, intensity: 0.45 });
+bindVirtualButton('drift', 'Space', { color: '#ffba35', haptic: 20, intensity: 0.32 });
+bindVirtualButton('up', 'ArrowUp', { color: '#9fff74', haptic: 12, intensity: 0.18 });
+bindVirtualButton('down', 'ArrowDown', { color: '#9fff74', haptic: 12, intensity: 0.18 });
+bindVirtualButton('turbo', null, { color: '#ff35f8', haptic: 35, intensity: 0.45 });
+if (virtualController.settings.turbo) {
+  virtualController.buttons.turbo.node.dataset.active = 'true';
+  virtualController.buttons.turbo.node.textContent = 'TURBO ON';
+}
+
+if (navigator.getBattery) {
+  navigator.getBattery().then(battery => {
+    virtualController.battery.supported = true;
+    const updateBattery = () => {
+      virtualController.battery.level = battery.level;
+      virtualController.battery.charging = battery.charging;
+    };
+    updateBattery();
+    battery.addEventListener('levelchange', updateBattery);
+    battery.addEventListener('chargingchange', updateBattery);
+  }).catch(() => {});
+}
+
+function setMotionEnabled(enabled) {
+  virtualController.settings.motion = enabled;
+  virtualController.motion.active = enabled;
+  saveControllerSettings();
+  motionToggle.textContent = enabled ? 'MOTION ON' : 'MOTION OFF';
+  motionToggle.style.borderColor = enabled ? 'rgba(0,255,170,.8)' : 'rgba(255,255,255,.22)';
+}
+
+motionToggle.addEventListener('click', async () => {
+  if (!virtualController.motion.supported) {
+    motionToggle.textContent = 'NO MOTION';
+    return;
+  }
+  const anyDeviceOrientation = window.DeviceOrientationEvent;
+  if (anyDeviceOrientation?.requestPermission) {
+    try {
+      const result = await anyDeviceOrientation.requestPermission();
+      if (result !== 'granted') return;
+    } catch (e) {
+      return;
+    }
+  }
+  setMotionEnabled(!virtualController.settings.motion);
+  hapticPulse(24, 0.24);
+});
+setMotionEnabled(virtualController.settings.motion);
+
+window.addEventListener('deviceorientation', e => {
+  if (!virtualController.settings.motion) return;
+  const gamma = THREE.MathUtils.clamp((e.gamma || 0) / 35, -1, 1);
+  const beta = THREE.MathUtils.clamp(((e.beta || 0) - 25) / 35, -1, 1);
+  virtualController.motion.x = Math.abs(gamma) < virtualController.settings.deadzone ? 0 : gamma * virtualController.settings.sensitivity;
+  virtualController.motion.y = Math.abs(beta) < virtualController.settings.deadzone ? 0 : beta;
+});
+
+function updateVirtualController(dt) {
+  const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(p => p && p.connected) : [];
+  const status = pads.length ? `${pads.length} WIRELESS PAD${pads.length > 1 ? 'S' : ''}` : virtualController.motion.active ? 'TOUCH + MOTION' : 'TOUCH READY';
+  controllerStatus.textContent = status;
+  controllerBattery.textContent = virtualController.battery.supported && virtualController.battery.level !== null
+    ? `BATTERY ${Math.round(virtualController.battery.level * 100)}%${virtualController.battery.charging ? ' +' : ''}`
+    : 'BATTERY N/A';
+  virtualController.turboPulse += dt;
+  virtualController.turboBoost = virtualController.settings.turbo && Math.sin(virtualController.turboPulse * 18) > 0.2 && !state.gameOver;
+  for (let i = virtualController.particles.length - 1; i >= 0; i--) {
+    const p = virtualController.particles[i];
+    p.life -= dt * 1.8;
+    p.x += p.vx * 60 * dt;
+    p.y += p.vy * 60 * dt;
+    p.node.style.transform = `translate(${p.x}px,${p.y}px) scale(${Math.max(0, p.life)})`;
+    p.node.style.opacity = `${Math.max(0, p.life)}`;
+    if (p.life <= 0) {
+      p.node.remove();
+      virtualController.particles.splice(i, 1);
+    }
+  }
+}
+
+function controllerMenuAction(dt) {
+  const now = performance.now();
+  const x = state.joystick.active ? state.joystick.x : state.gamepad.x;
+  const y = state.joystick.active ? state.joystick.y : state.gamepad.y;
+  if (now - virtualController.lastMenuMove < 260) return;
+  if (levelSelectOverlay.style.display === 'flex') {
+    const buttons = Array.from(levelSelectOverlay.querySelectorAll('.level-btn'));
+    if (!buttons.length) return;
+    let index = buttons.findIndex(btn => btn.dataset.padFocus === 'true');
+    if (index < 0) index = 1;
+    if (Math.abs(x) > 0.45) index = THREE.MathUtils.clamp(index + Math.sign(x), 0, buttons.length - 1);
+    if (Math.abs(y) > 0.72 || state.keys.Enter || virtualController.buttons.boost?.pressed || state.gamepad.boost) buttons[index].click();
+    buttons.forEach((btn, i) => {
+      btn.dataset.padFocus = i === index ? 'true' : 'false';
+      btn.style.boxShadow = i === index ? '0 0 24px rgba(0,255,255,.8),0 8px 0 rgba(0,0,0,.3)' : '0 5px 0 rgba(0,0,0,0.3)';
+    });
+    virtualController.lastMenuMove = now;
+  } else if (garageOverlay.style.display === 'flex' && (Math.abs(y) > 0.65 || virtualController.buttons.drift?.pressed || state.gamepad.drift)) {
+    garageOverlay.style.display = 'none';
+    buildLevelSelect();
+    virtualController.lastMenuMove = now;
+  }
+}
 
 function activateBoost() {
   if (state.boosting || state.boost < 18 || state.boostCooldown > 0 || state.gameOver) return;
   state.boosting = true;
   state.boostPulse = 0.35;
   state.boostCooldown = 0.4;
+  hapticPulse(44, 0.7);
   awardEvent('boost', 30, 'BOOST LAUNCH', { boost: 0, comboStrength: 0.4, color: '#44ccff' });
   playSfx('boost');
 }
 
 function updateBoost(dt, dtScale) {
-  const requestingBoost = state.keys.KeyE || state.keys.KeyQ || state.gamepad.boost;
+  const requestingBoost = state.keys.KeyE || state.keys.KeyQ || state.gamepad.boost || virtualController.turboBoost;
   if (requestingBoost && !state.boosting) activateBoost();
   if (state.boostCooldown > 0) state.boostCooldown -= dt;
   if (state.boosting) {
@@ -3075,9 +3362,11 @@ function formatTimeFixed(seconds) {
 function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
   updateGamepadInput();
+  updateVirtualController(dt);
   
   // Don't run game if no level selected
   if (currentLevel === 0) {
+    controllerMenuAction(dt);
     renderToon();
     return;
   }
@@ -3167,8 +3456,10 @@ function animate() {
     updateCombo(dt);
     updateDynamicEvents(dt);
     const holdingDrift = state.keys['Space'] || state.keys['ShiftLeft'] || state.keys['ShiftRight'] || state.gamepad.drift;
-    const joystickX = state.joystick?.active ? state.joystick.x : state.gamepad.x;
-    const joystickY = state.joystick?.active ? state.joystick.y : state.gamepad.y;
+    const motionX = virtualController.settings.motion ? virtualController.motion.x : 0;
+    const motionY = virtualController.settings.motion ? virtualController.motion.y : 0;
+    const joystickX = state.joystick?.active ? state.joystick.x : (Math.abs(state.gamepad.x) > 0.02 ? state.gamepad.x : motionX);
+    const joystickY = state.joystick?.active ? state.joystick.y : (Math.abs(state.gamepad.y) > 0.02 ? state.gamepad.y : motionY);
     const turningLeft = state.keys['ArrowLeft'] || state.keys['KeyA'];
     const turningRight = state.keys['ArrowRight'] || state.keys['KeyD'];
 
@@ -3200,8 +3491,8 @@ function animate() {
     const speedRatioForSteering = Math.min(1, Math.abs(state.speed) / state.maxSpeed);
     const highSpeedSteerControl = THREE.MathUtils.lerp(1.0, state.drifting ? 0.78 : 0.58, speedRatioForSteering);
 
-    const touchThrottle = state.joystick.active ? Math.max(0, -state.joystick.y) : 0;
-    const touchBrake = state.joystick.active ? Math.max(0, state.joystick.y) : 0;
+    const touchThrottle = state.joystick.active || virtualController.settings.motion ? Math.max(0, -joystickY) : 0;
+    const touchBrake = state.joystick.active || virtualController.settings.motion ? Math.max(0, joystickY) : 0;
     const throttleAmount = Math.max(state.keys['ArrowUp'] || state.keys['KeyW'] ? 1 : 0, touchThrottle, state.gamepad.accelerate);
     const brakeAmount = Math.max(state.keys['ArrowDown'] || state.keys['KeyS'] ? 1 : 0, touchBrake, state.gamepad.brake);
     if (throttleAmount > 0.05) {
@@ -3220,6 +3511,7 @@ function animate() {
       state.drifting = true;
       state.driftMomentum = Math.sign(turnDir) * 0.02;
       state.driftBoost = 0;
+      hapticPulse(24, 0.32);
     }
     if (state.drifting && (!holdingDrift || state.speed < state.maxSpeed * 0.15)) {
       if (state.driftPoints > 0) {
@@ -3320,6 +3612,7 @@ function animate() {
       state.speed *= 0.85;
       if (state.wallCrashCooldown <= 0) {
         state.wallCrashCooldown = 1.0;
+        hapticPulse(90, 1);
         state.crashes++;
         state.perfectLapActive = false;
         state.boost = Math.max(0, state.boost - 22);
@@ -3397,6 +3690,7 @@ function animate() {
 
         if (state.carCrashCooldown <= 0) {
           state.carCrashCooldown = 1.0;
+          hapticPulse(100, 1);
           state.crashes++;
           state.perfectLapActive = false;
           state.boost = Math.max(0, state.boost - 28);
@@ -3463,6 +3757,7 @@ function animate() {
 
         if (state.wallCrashCooldown <= 0) {
           state.wallCrashCooldown = 0.5;
+          hapticPulse(70, 0.8);
           state.crashes++;
           state.perfectLapActive = false;
           state.boost = Math.max(0, state.boost - 16);
@@ -3701,10 +3996,11 @@ function animate() {
   const camDist = 18;   // pulled back further to keep full bus visible
   const camHeight = 10; // higher up to see over the tall bus
 
-  // Drift camera: rotate slightly left when drifting
+  // Drift camera: rotate slightly left when drifting, plus right-stick camera look.
+  const cameraStickLook = THREE.MathUtils.clamp(state.cameraStick.x || 0, -1, 1) * 0.35;
   const driftCamTarget = (state.drifting && state.speed > state.maxSpeed * 0.2) ? 0.25 : 0;
   state._driftCamAngle = THREE.MathUtils.lerp(state._driftCamAngle || 0, driftCamTarget, 0.04);
-  const camAngle = state.carAngle + state._driftCamAngle;
+  const camAngle = state.carAngle + state._driftCamAngle + cameraStickLook;
 
   const idealOffset = new THREE.Vector3(
     state.carPos.x - Math.sin(camAngle) * camDist,
@@ -3938,6 +4234,7 @@ window.addEventListener('resize', () => {
 
 function restartGame() {
   if (!state.gameOver) return;
+  hapticPulse(35, 0.3);
   // Restart audio fresh so pitch/volume reset cleanly
   stopEngineAudio();
   setTimeout(() => { if (currentLevel !== 0) initEngineAudio(); }, 450);
@@ -4014,8 +4311,18 @@ document.head.appendChild(logStyle);
 cameraOffset.set(state.carPos.x, 10, state.carPos.z - 18);
 cameraLookAt.set(state.carPos.x, 1.5, state.carPos.z);
 
-// Auto-start on medium difficulty (after all HUD elements are created)
-startLevel(2);
+// Use setup data from the React lobby if available, otherwise fall back to level select overlay
+const __setup = window.__gameSetup;
+if (__setup) {
+  const firstPlayer = __setup.players[0];
+  if (firstPlayer?.vehicle && VEHICLES[firstPlayer.vehicle]) {
+    profile.selectedVehicle = firstPlayer.vehicle;
+    saveProfile();
+  }
+  startLevel(__setup.difficulty);
+} else {
+  buildLevelSelect();
+}
 updateDiffBtn();
 
 // Use setAnimationLoop for WebGPU renderer

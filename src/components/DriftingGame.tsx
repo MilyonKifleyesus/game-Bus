@@ -1,9 +1,16 @@
-import { useEffect } from "react";
+import { useState } from "react";
+import GameSetup, { type GameSetupData } from "./GameSetup";
 
 let gameLoaded = false;
 
 export default function DriftingGame() {
-  useEffect(() => {
+  const [setupDone, setSetupDone] = useState(false);
+
+  const handleSetupComplete = (data: GameSetupData) => {
+    // Expose setup data to game-scene.js before it initialises
+    (window as unknown as Record<string, unknown>).__gameSetup = data;
+    setSetupDone(true);
+
     if (gameLoaded) return;
     gameLoaded = true;
     // Dynamic import so the heavy three.js scene only loads client-side.
@@ -11,7 +18,7 @@ export default function DriftingGame() {
     import("../game-scene.js").catch((e: unknown) => {
       console.error("Failed to load game scene:", e);
     });
-  }, []);
+  };
 
   return (
     <>
@@ -53,6 +60,8 @@ export default function DriftingGame() {
       <div id="points-vignette" />
       <div id="points-chromatic-left" />
       <div id="points-chromatic-right" />
+
+      {!setupDone && <GameSetup onComplete={handleSetupComplete} />}
     </>
   );
 }
