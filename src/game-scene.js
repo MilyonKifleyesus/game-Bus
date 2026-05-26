@@ -2847,6 +2847,8 @@ const virtualController = {
 };
 window.virtualController = virtualController;
 
+const SHOW_VIRTUAL_CONTROLLER = false;
+
 const controllerStyle = document.createElement('style');
 controllerStyle.textContent = `
   .vc-root{position:fixed;inset:auto 0 0 0;height:222px;pointer-events:none;z-index:610;font-family:"Fredoka","Lilita One",Arial,sans-serif;color:#eaffff}
@@ -2873,6 +2875,7 @@ document.head.appendChild(controllerStyle);
 
 const mobileControls = document.createElement('div');
 mobileControls.className = 'vc-root';
+mobileControls.style.display = SHOW_VIRTUAL_CONTROLLER ? 'block' : 'none';
 mobileControls.setAttribute('aria-label', 'Advanced virtual game controller');
 mobileControls.innerHTML = `
   <div class="vc-joy vc-glass" data-stick="drive" role="application" aria-label="360 degree analog driving joystick" style="left:22px;bottom:38px">
@@ -3281,7 +3284,7 @@ function updateDynamicEvents(dt) {
 
 function updateArcadeHud(dt) {
   const compact = window.innerWidth < 640;
-  mobileControls.style.display = 'block';
+  mobileControls.style.display = SHOW_VIRTUAL_CONTROLLER ? 'block' : 'none';
   timerDisplay.style.transform = compact ? 'scale(0.72)' : '';
   timerDisplay.style.transformOrigin = 'top left';
   timerDisplay.style.left = compact ? '8px' : '24px';

@@ -92,104 +92,202 @@ function Btn({ children, onClick, color = '#fff', style }: { children: React.Rea
 
 function SetupVirtualController({ step }: { step: Step }) {
   useEffect(() => {
-    let selected = 0;
-    let lastMove = 0;
-    const controller = document.createElement('div');
-    controller.setAttribute('aria-label', 'Setup virtual joystick controller');
-    controller.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:190px;z-index:900;pointer-events:none;font-family:"Fredoka","Lilita One",sans-serif;color:#eaffff;';
-    controller.innerHTML = `
-      <style>
-        .setup-vc-stick{position:absolute;left:22px;bottom:28px;width:142px;height:142px;border-radius:30px;pointer-events:auto;touch-action:none;cursor:grab;background:linear-gradient(135deg,rgba(0,255,255,.14),rgba(255,0,255,.12));border:2px solid rgba(120,240,255,.62);box-shadow:0 0 28px rgba(0,255,255,.24),inset 0 0 24px rgba(255,255,255,.08);backdrop-filter:blur(12px)}
-        .setup-vc-stick:before{content:"";position:absolute;inset:16px;border-radius:50%;border:2px solid rgba(255,255,255,.48);background:radial-gradient(circle,rgba(0,255,255,.18),rgba(0,0,0,.22))}
-        .setup-vc-thumb{position:absolute;left:50%;top:50%;width:58px;height:58px;border-radius:50%;transform:translate(-50%,-50%);background:radial-gradient(circle at 35% 25%,#fff7a2,#ffdd33 45%,#ff6a00);border:3px solid rgba(255,255,255,.78);box-shadow:0 8px 0 rgba(0,0,0,.35),0 0 24px rgba(255,221,68,.72)}
-        .setup-vc-label{position:absolute;left:0;right:0;bottom:-18px;text-align:center;font-size:11px;font-weight:900;letter-spacing:1.2px;text-shadow:0 0 10px #00efff}
-        .setup-vc-action{position:absolute;right:26px;bottom:52px;width:96px;height:64px;border-radius:20px;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#48efff;background:linear-gradient(135deg,rgba(72,239,255,.22),rgba(255,255,255,.08));border:2px solid rgba(72,239,255,.72);box-shadow:0 7px 0 rgba(0,0,0,.32),0 0 24px rgba(72,239,255,.28)}
-        .setup-vc-status{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);width:min(420px,42vw);padding:10px 14px;border-radius:18px;background:rgba(8,14,30,.52);border:2px solid rgba(115,240,255,.45);box-shadow:0 0 22px rgba(0,240,255,.18);backdrop-filter:blur(12px);font-size:11px;font-weight:900;letter-spacing:.8px;text-align:center}
-        @media(max-width:760px){.setup-vc-status{display:none}.setup-vc-stick{width:132px;height:132px}.setup-vc-action{right:18px;bottom:48px}}
-      </style>
-      <div class="setup-vc-stick" data-setup-stick><div class="setup-vc-thumb" data-setup-thumb></div><div class="setup-vc-label">MENU STICK</div></div>
-      <div class="setup-vc-status" data-setup-status>JOYSTICK MENU CONTROL | DRAG LEFT/RIGHT | BOOST SELECT</div>
-      <div class="setup-vc-action" data-setup-action>SELECT</div>
-    `;
-    document.body.appendChild(controller);
+    let selIdx = 0;
+    let lastNav = 0;
+    const gpHeld: Record<number, boolean> = {};
+    let rafId = 0;
 
-    const stick = controller.querySelector('[data-setup-stick]') as HTMLDivElement;
-    const thumb = controller.querySelector('[data-setup-thumb]') as HTMLDivElement;
-    const action = controller.querySelector('[data-setup-action]') as HTMLDivElement;
-    const getButtons = () => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).filter(btn => !btn.disabled && btn.offsetParent !== null);
-    const pulse = (duration = 20) => {
-      if (navigator.vibrate) navigator.vibrate(duration);
-    };
+    // ── DOM ──────────────────────────────────────────────────────────────────
+    const root = document.createElement('div');
+    root.setAttribute('aria-label', 'Setup virtual joystick controller');
+    root.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:190px;z-index:900;pointer-events:none;font-family:"Fredoka","Lilita One",sans-serif;color:#eaffff;';
+    root.innerHTML = `
+      <style>
+        .svc-stick{position:absolute;left:22px;bottom:28px;width:142px;height:142px;border-radius:30px;pointer-events:auto;touch-action:none;cursor:grab;background:linear-gradient(135deg,rgba(0,255,255,.14),rgba(255,0,255,.12));border:2px solid rgba(120,240,255,.62);box-shadow:0 0 28px rgba(0,255,255,.24),inset 0 0 24px rgba(255,255,255,.08);backdrop-filter:blur(12px)}
+        .svc-stick:before{content:"";position:absolute;inset:16px;border-radius:50%;border:2px solid rgba(255,255,255,.48);background:radial-gradient(circle,rgba(0,255,255,.18),rgba(0,0,0,.22))}
+        .svc-thumb{position:absolute;left:50%;top:50%;width:58px;height:58px;border-radius:50%;transform:translate(-50%,-50%);background:radial-gradient(circle at 35% 25%,#fff7a2,#ffdd33 45%,#ff6a00);border:3px solid rgba(255,255,255,.78);box-shadow:0 8px 0 rgba(0,0,0,.35),0 0 24px rgba(255,221,68,.72)}
+        .svc-label{position:absolute;left:0;right:0;bottom:-18px;text-align:center;font-size:11px;font-weight:900;letter-spacing:1.2px;text-shadow:0 0 10px #00efff}
+        .svc-action{position:absolute;right:26px;bottom:52px;width:96px;height:64px;border-radius:20px;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#48efff;background:linear-gradient(135deg,rgba(72,239,255,.22),rgba(255,255,255,.08));border:2px solid rgba(72,239,255,.72);box-shadow:0 7px 0 rgba(0,0,0,.32),0 0 24px rgba(72,239,255,.28)}
+        .svc-hint{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);width:min(460px,44vw);padding:10px 14px;border-radius:18px;background:rgba(8,14,30,.52);border:2px solid rgba(115,240,255,.45);box-shadow:0 0 22px rgba(0,240,255,.18);backdrop-filter:blur(12px);font-size:11px;font-weight:900;letter-spacing:.8px;text-align:center;pointer-events:none}
+        @media(max-width:760px){.svc-hint{display:none}.svc-stick{width:132px;height:132px}.svc-action{right:18px;bottom:48px}}
+      </style>
+      <div class="svc-stick" data-stick><div class="svc-thumb" data-thumb></div><div class="svc-label">MENU STICK</div></div>
+      <div class="svc-hint">STICK / D-PAD: NAVIGATE  ●  SELECT / A BUTTON: CONFIRM  ●  B / ESC: BACK</div>
+      <div class="svc-action" data-action>SELECT</div>
+    `;
+    document.body.appendChild(root);
+
+    const stick  = root.querySelector('[data-stick]')  as HTMLDivElement;
+    const thumb  = root.querySelector('[data-thumb]')  as HTMLDivElement;
+    const action = root.querySelector('[data-action]') as HTMLDivElement;
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    const inInput = () => document.activeElement instanceof HTMLInputElement;
+
+    // All focusable interactive elements not inside the controller itself
+    const getItems = (): HTMLElement[] =>
+      Array.from(document.querySelectorAll<HTMLElement>('button:not([disabled]), input'))
+        .filter(el => el.offsetParent !== null && !root.contains(el));
+
     const paintFocus = () => {
-      const buttons = getButtons();
-      if (!buttons.length) return;
-      selected = Math.max(0, Math.min(selected, buttons.length - 1));
-      buttons.forEach((btn, i) => {
-        btn.style.outline = i === selected ? '3px solid rgba(0,255,255,.92)' : '';
-        btn.style.boxShadow = i === selected ? '0 0 26px rgba(0,255,255,.72), 0 7px 0 rgba(0,0,0,.35)' : btn.style.boxShadow;
+      const items = getItems();
+      if (!items.length) return;
+      selIdx = Math.max(0, Math.min(selIdx, items.length - 1));
+      const active = inInput();
+      items.forEach((el, i) => {
+        if (i === selIdx && !active) {
+          el.style.outline = '3px solid rgba(0,255,255,.92)';
+          el.style.boxShadow = '0 0 26px rgba(0,255,255,.72), 0 7px 0 rgba(0,0,0,.35)';
+        } else {
+          el.style.outline = '';
+        }
       });
     };
-    const moveSelection = (dir: number) => {
+
+    // 2D positional navigation: find nearest element in the given direction
+    const nav = (dx: number, dy: number) => {
       const now = performance.now();
-      if (now - lastMove < 240) return;
-      const buttons = getButtons();
-      if (!buttons.length) return;
-      selected = (selected + dir + buttons.length) % buttons.length;
-      lastMove = now;
-      pulse(12);
-      paintFocus();
-    };
-    const clickSelected = () => {
-      const buttons = getButtons();
-      if (buttons[selected]) {
-        pulse(30);
-        buttons[selected].click();
+      if (now - lastNav < 190) return;
+      if (inInput()) return;
+      lastNav = now;
+
+      const items = getItems();
+      if (!items.length) return;
+      selIdx = Math.max(0, Math.min(selIdx, items.length - 1));
+
+      const cur = items[selIdx].getBoundingClientRect();
+      const cx = cur.left + cur.width / 2;
+      const cy = cur.top + cur.height / 2;
+
+      let best = -1, bestScore = Infinity;
+      items.forEach((el, i) => {
+        if (i === selIdx) return;
+        const r = el.getBoundingClientRect();
+        const ex = (r.left + r.width / 2) - cx;
+        const ey = (r.top + r.height / 2) - cy;
+        const dot = ex * dx + ey * dy;
+        if (dot <= 5) return; // element is not in the desired direction
+        const perp = Math.abs(ex * dy - ey * dx);
+        // penalise perpendicular offset; reward proximity
+        const score = perp * 2.5 + dot;
+        if (score < bestScore) { bestScore = score; best = i; }
+      });
+
+      if (best >= 0) {
+        selIdx = best;
+        if (navigator.vibrate) navigator.vibrate(12);
+        paintFocus();
       }
     };
-    const updateStick = (e: PointerEvent) => {
+
+    const activate = () => {
+      if (navigator.vibrate) navigator.vibrate(28);
+      const items = getItems();
+      const el = items[selIdx];
+      if (!el) return;
+      if (el instanceof HTMLInputElement) {
+        el.focus(); el.select();
+      } else {
+        (el as HTMLButtonElement).click();
+      }
+    };
+
+    const goBack = () => {
+      if (inInput()) {
+        (document.activeElement as HTMLInputElement).blur();
+        return;
+      }
+      const btn = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+        .find(b => b.offsetParent !== null && /←|back/i.test(b.textContent ?? ''));
+      if (btn) btn.click();
+    };
+
+    // ── Virtual on-screen stick ──────────────────────────────────────────────
+    const onStickMove = (e: PointerEvent) => {
       const rect = stick.getBoundingClientRect();
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top + rect.height / 2;
-      const max = rect.width * 0.32;
-      const dx = e.clientX - cx;
-      const dy = e.clientY - cy;
-      const dist = Math.min(max, Math.hypot(dx, dy));
+      const maxR = rect.width * 0.32;
+      const dx = e.clientX - (rect.left + rect.width / 2);
+      const dy = e.clientY - (rect.top + rect.height / 2);
+      const dist = Math.min(maxR, Math.hypot(dx, dy));
       const angle = Math.atan2(dy, dx);
       const px = Math.cos(angle) * dist;
       const py = Math.sin(angle) * dist;
       thumb.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
-      if (Math.abs(px / max) > 0.55) moveSelection(Math.sign(px));
-      if (py / max < -0.72 || py / max > 0.72) clickSelected();
+      const nx = px / maxR, ny = py / maxR;
+      if (Math.abs(nx) >= Math.abs(ny)) {
+        if (Math.abs(nx) > 0.50) nav(Math.sign(nx), 0);
+      } else {
+        if (Math.abs(ny) > 0.50) nav(0, Math.sign(ny));
+      }
     };
-    stick.addEventListener('pointerdown', e => {
-      e.preventDefault();
-      stick.setPointerCapture(e.pointerId);
-      updateStick(e);
-    });
-    stick.addEventListener('pointermove', e => {
-      if (!stick.hasPointerCapture(e.pointerId)) return;
-      e.preventDefault();
-      updateStick(e);
-    });
-    const reset = () => { thumb.style.transform = 'translate(-50%,-50%)'; };
-    stick.addEventListener('pointerup', reset);
-    stick.addEventListener('pointercancel', reset);
-    action.addEventListener('pointerdown', e => {
-      e.preventDefault();
-      clickSelected();
-    });
-    const keyHandler = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') moveSelection(-1);
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') moveSelection(1);
-      if (e.key === 'Enter' || e.key === ' ') clickSelected();
+    stick.addEventListener('pointerdown', e => { e.preventDefault(); stick.setPointerCapture(e.pointerId); onStickMove(e); });
+    stick.addEventListener('pointermove', e => { if (!stick.hasPointerCapture(e.pointerId)) return; e.preventDefault(); onStickMove(e); });
+    const resetThumb = () => { thumb.style.transform = 'translate(-50%,-50%)'; };
+    stick.addEventListener('pointerup', resetThumb);
+    stick.addEventListener('pointercancel', resetThumb);
+    action.addEventListener('pointerdown', e => { e.preventDefault(); activate(); });
+
+    // ── Keyboard ─────────────────────────────────────────────────────────────
+    const onKey = (e: KeyboardEvent) => {
+      if (inInput()) {
+        if (e.key === 'Escape') { (document.activeElement as HTMLInputElement).blur(); e.preventDefault(); }
+        return;
+      }
+      if (e.key === 'ArrowLeft')        nav(-1,  0);
+      else if (e.key === 'ArrowRight')  nav( 1,  0);
+      else if (e.key === 'ArrowUp')     nav( 0, -1);
+      else if (e.key === 'ArrowDown')   nav( 0,  1);
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); }
+      else if (e.key === 'Escape')      goBack();
     };
-    window.addEventListener('keydown', keyHandler);
-    const interval = window.setInterval(paintFocus, 300);
+    window.addEventListener('keydown', onKey);
+
+    // ── Physical gamepad (A=confirm, B=back, D-pad + left stick navigate) ────
+    const pollGamepad = () => {
+      const gpads = navigator.getGamepads?.();
+      if (gpads) {
+        const gp = gpads[0] ?? gpads[1] ?? gpads[2] ?? gpads[3];
+        if (gp) {
+          const ax = gp.axes[0] ?? 0;
+          const ay = gp.axes[1] ?? 0;
+          const dL = gp.buttons[14]?.pressed;
+          const dR = gp.buttons[15]?.pressed;
+          const dU = gp.buttons[12]?.pressed;
+          const dD = gp.buttons[13]?.pressed;
+          const mx = dL ? -1 : dR ? 1 : Math.abs(ax) > 0.45 ? Math.sign(ax) : 0;
+          const my = dU ? -1 : dD ? 1 : Math.abs(ay) > 0.45 ? Math.sign(ay) : 0;
+          if (mx !== 0) nav(mx, 0);
+          else if (my !== 0) nav(0, my);
+
+          // A button — confirm/select
+          if (gp.buttons[0]?.pressed && !gpHeld[0]) activate();
+          gpHeld[0] = !!gp.buttons[0]?.pressed;
+
+          // B button — back / exit input
+          if (gp.buttons[1]?.pressed && !gpHeld[1]) goBack();
+          gpHeld[1] = !!gp.buttons[1]?.pressed;
+
+          // Y button — also confirm
+          if (gp.buttons[3]?.pressed && !gpHeld[3]) activate();
+          gpHeld[3] = !!gp.buttons[3]?.pressed;
+
+          // Start / Options — confirm
+          if (gp.buttons[9]?.pressed && !gpHeld[9]) activate();
+          gpHeld[9] = !!gp.buttons[9]?.pressed;
+        }
+      }
+      rafId = requestAnimationFrame(pollGamepad);
+    };
+    rafId = requestAnimationFrame(pollGamepad);
+
+    const iv = window.setInterval(paintFocus, 250);
     paintFocus();
+
     return () => {
-      window.clearInterval(interval);
-      window.removeEventListener('keydown', keyHandler);
-      controller.remove();
+      clearInterval(iv);
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('keydown', onKey);
+      root.remove();
     };
   }, [step]);
 
@@ -536,10 +634,7 @@ export default function GameSetup({ onComplete }: { onComplete: (data: GameSetup
   };
 
   if (step === 'lobby') {
-    return <>
-      <LobbyScreen onSolo={handleSolo} onFriends={handleFriends} />
-      <SetupVirtualController step={step} />
-    </>;
+    return <LobbyScreen onSolo={handleSolo} onFriends={handleFriends} />;
   }
 
   if (step === 'players') {
@@ -551,7 +646,6 @@ export default function GameSetup({ onComplete }: { onComplete: (data: GameSetup
           onBack={() => setStep('lobby')}
           onNext={() => { setVehiclePlayerIdx(0); setStep('vehicles'); }}
         />
-        <SetupVirtualController step={step} />
       </>
     );
   }
@@ -575,7 +669,6 @@ export default function GameSetup({ onComplete }: { onComplete: (data: GameSetup
             }
           }}
         />
-        <SetupVirtualController step={step} />
       </>
     );
   }
@@ -591,7 +684,6 @@ export default function GameSetup({ onComplete }: { onComplete: (data: GameSetup
           setStep('vehicles');
         }}
       />
-      <SetupVirtualController step={step} />
     </>
   );
 }
